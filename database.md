@@ -547,72 +547,69 @@ INSERT INTO work_item_package (sor_code, package_code, package_name) VALUES
 ('TN_SOR_2025','A','Earth Work'),
 ('TN_SOR_2025','B','PCC Work'),
 ('TN_SOR_2025','C','RCC Work'),
-('TN_SOR_2025','D','Reinforcement Work'),
-('TN_SOR_2025','E','Masonry Work'),
-('TN_SOR_2025','F','Plastering Work'),
-('TN_SOR_2025','G','Flooring Work'),
-('TN_SOR_2025','H','Painting Work'),
-('TN_SOR_2025','I','UPVC'),
-('TN_SOR_2025','J','Fabrication Work');
+('TN_SOR_2025','D','Masonry Work'),
+('TN_SOR_2025','E','Plastering Work'),
+('TN_SOR_2025','F','Flooring Work'),
+('TN_SOR_2025','G','Painting Work'),
+('TN_SOR_2025','H','UPVC'),
+('TN_SOR_2025','I','Fabrication Work');
 
 INSERT INTO work_item_subpackage
-(sor_code, package_code, subpackage_code, subpackage_name, description)
+(sor_code, package_code, subpackage_code, subpackage_name, description, analysis_quantity, analysis_unit)
 VALUES
+-- A: Earth Work
+('TN_SOR_2025','A','A1','Earthwork',NULL,NULL,NULL),
 
--- PCC
-('TN_SOR_2025','B','B1','PCC - M5',''),
-('TN_SOR_2025','B','B2','PCC - M7.5',''),
-('TN_SOR_2025','B','B3','PCC - M10',''),
-('TN_SOR_2025','B','B4','PCC - M15',''),
-('TN_SOR_2025','B','B5','PCC - M20',''),
+-- B: PCC Work
+('TN_SOR_2025','B','B1','PCC - M5','PCC M5 (1:5:10)',NULL,NULL),
+('TN_SOR_2025','B','B2','PCC - M7.5','PCC M7.5 (1:4:8)',NULL,NULL),
+('TN_SOR_2025','B','B3','PCC - M10','PCC M10 (1:3:6)',NULL,NULL),
+('TN_SOR_2025','B','B4','PCC - M15','PCC M15 (1:2:4)',NULL,NULL),
+('TN_SOR_2025','B','B5','PCC - M20','PCC M20 (1:1.5:3)',NULL,NULL),
 
--- RCC
-('TN_SOR_2025','C','C1','RCC - M25',''),
-('TN_SOR_2025','C','C2','RCC - M30',''),
-('TN_SOR_2025','C','C3','RCC - M40',''),
-('TN_SOR_2025','C','C4','RCC - M50',''),
+-- C: RCC Work
+('TN_SOR_2025','C','C1','RCC - M20','RCC M20 (1:1.5:3)',NULL,NULL),
+('TN_SOR_2025','C','C2','RCC - M25','RCC M25 (1:1:2)',NULL,NULL),
+('TN_SOR_2025','C','C3','RCC - M30','RCC M30 (1:0.75:1.5)',NULL,NULL),
 
--- Reinforcement
-('TN_SOR_2025','D','D1','Fe 500',''),
-('TN_SOR_2025','D','D2','Fe 550',''),
-('TN_SOR_2025','D','D3','Fe 550D',''),
+-- D: Masonry Work
+('TN_SOR_2025','D','D1','Burnt Brick (230mm X 115mm X 75mm)','Masonry Burnt Brick (230mm X 115mm X 75mm) with 1:6 CM mortar',NULL,NULL),
+('TN_SOR_2025','D','D2','Cement Block (200mm X 200mm X 400mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D3','Cement Block (150mm X 200mm X 400mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D4','Cement Block (100mm X 200mm X 400mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D5','AAC Block (600mm X 200mm X 200mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D6','AAC Block (600mm X 200mm X 150mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D7','AAC Block (600mm X 200mm X 100mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D8','Flyash Block (600mm X 200mm X 100mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D9','Flyash Block (400mm X 200mm X 200mm)',NULL,NULL,NULL),
+('TN_SOR_2025','D','D10','Flyash Block (230mm X 110mm X 70mm)',NULL,NULL,NULL),
 
--- Masonry
-('TN_SOR_2025','E','E1','Burnt Brick (230mm X 115mm X 75mm)',''),
-('TN_SOR_2025','E','E2','Cement Block (200mm X 200mm X 400mm)',''),
-('TN_SOR_2025','E','E3','Cement Block (150mm X 200mm X 400mm)',''),
-('TN_SOR_2025','E','E4','Cement Block (100mm X 200mm X 400mm)',''),
-('TN_SOR_2025','E','E5','AAC Block (600mm X 200mm X 200mm)',''),
-('TN_SOR_2025','E','E6','AAC Block (600mm X 200mm X 150mm)',''),
-('TN_SOR_2025','E','E7','AAC Block (600mm X 200mm X 100mm)',''),
-('TN_SOR_2025','E','E8','Flyash Block (600mm X 200mm X 100mm)',''),
-('TN_SOR_2025','E','E9','Flyash Block (400mm X 200mm X 200mm)',''),
-('TN_SOR_2025','E','E10','Flyash Block (230mm X 110mm X 70mm)',''),
+-- E: Plastering Work
+('TN_SOR_2025','E','E1','Plastering Mix 1:2 CM','Cement Mortor of 1:2 Plestering Mix for 20mm thick plastering',NULL,NULL),
+('TN_SOR_2025','E','E2','Plastering Mix 1:3 CM','Cement Mortor of 1:3 Plestering Mix for 20mm thick plastering',NULL,NULL),
+('TN_SOR_2025','E','E3','Plastering Mix 1:4 CM','Cement Mortor of 1:4 Plestering Mix for 20mm thick plastering',NULL,NULL),
+('TN_SOR_2025','E','E4','Plastering Mix 1:5 CM','Cement Mortor of 1:5 Plestering Mix for 12mm thick plastering',NULL,NULL),
+('TN_SOR_2025','E','E5','Plastering Mix 1:6 CM','Cement Mortor of 1:6 Plestering Mix for 12mm thick plastering',NULL,NULL),
 
--- Plastering
-('TN_SOR_2025','F','F1','1:2 Mix',''),
-('TN_SOR_2025','F','F2','1:3 Mix',''),
-('TN_SOR_2025','F','F3','1:4 Mix',''),
-('TN_SOR_2025','F','F4','1:5 Mix',''),
-('TN_SOR_2025','F','F5','1:6 Mix',''),
+-- F: Flooring Work
+('TN_SOR_2025','F','F1','Marble',NULL,NULL,NULL),
+('TN_SOR_2025','F','F2','Granite',NULL,NULL,NULL),
+('TN_SOR_2025','F','F3','Tile',NULL,NULL,NULL),
 
--- Flooring
-('TN_SOR_2025','G','G1','Marble',''),
-('TN_SOR_2025','G','G2','Granite',''),
-('TN_SOR_2025','G','G3','Tile',''),
+-- G: Painting Work
+('TN_SOR_2025','G','G1','Internal Wall Painting',NULL,NULL,NULL),
+('TN_SOR_2025','G','G2','Ceiling Painting',NULL,NULL,NULL),
+('TN_SOR_2025','G','G3','External Wall Painting',NULL,NULL,NULL),
 
--- Painting
-('TN_SOR_2025','H','H1','Internal Wall',''),
-('TN_SOR_2025','H','H2','External Wall',''),
+-- H: UPVC
+('TN_SOR_2025','H','H1','Doors',NULL,NULL,NULL),
+('TN_SOR_2025','H','H2','Windows',NULL,NULL,NULL),
 
--- UPVC
-('TN_SOR_2025','I','I1','Doors',''),
-('TN_SOR_2025','I','I2','Windows',''),
+-- I: Fabrication Work
+('TN_SOR_2025','I','I1','SS',NULL,NULL,NULL),
+('TN_SOR_2025','I','I2','MS',NULL,NULL,NULL),
+('TN_SOR_2025','I','I3','Aluminium',NULL,NULL,NULL);
 
--- Fabrication
-('TN_SOR_2025','J','J1','SS',''),
-('TN_SOR_2025','J','J2','MS',''),
-('TN_SOR_2025','J','J3','Aluminium','');
 
 INSERT INTO work_item_rate (sor_code, subpackage_code, amount)
 SELECT 'TN_SOR_2025', subpackage_code, 0
@@ -626,15 +623,15 @@ CREATE TABLE work_item_charges (
 );
 
 INSERT INTO work_item_charges (charge_name,percentage) VALUES
-('Water Charges',1.00),
+('Water Charges',1.50),
 ('Electrical Charges',1.00),
 ('Local Liaisoning & Dispute',0.50),
 ('Supervision Charges',1.00),
 ('Engineering & Testing Charges',0.50),
 ('Site Establishment',0.50),
 ('Insurance (Labour & Equipments)',0.50),
-('Contingency, Safety Compliance & Overhead',3.00),
-('Profit',9.00);
+('Contingency, Safety Compliance & Overhead',5.00),
+('Profit',10.00);
 
 CREATE TABLE work_item_analysis (
     id INT AUTO_INCREMENT PRIMARY KEY,
@@ -678,22 +675,6 @@ AND subpackage_code = 'E1';
 ALTER TABLE work_item_analysis
 ADD item VARCHAR(255) AFTER resource_type;
 
-INSERT INTO work_item_analysis
-(sor_code,subpackage_code,resource_type,item,material_code,labour_code,quantity,remark)
-VALUES
-
--- MATERIAL
-('TN_SOR_2025','E1','MATERIAL','Brick (500 bricks per Cu.M)','M-0003',NULL,5000,NULL),
-('TN_SOR_2025','E1','MATERIAL','Cement (13.5 bags or 0.45 Cu.M)','M-0001',NULL,0.68,NULL),
-('TN_SOR_2025','E1','MATERIAL','Fine Aggregate - M Sand','M-0125',NULL,2.70,NULL),
-
--- LABOUR
-('TN_SOR_2025','E1','LABOUR','Head Mason',NULL,'L-0031',0.5,NULL),
-('TN_SOR_2025','E1','LABOUR','Mason',NULL,'L-0031',10,NULL),
-('TN_SOR_2025','E1','LABOUR','Male Coolie',NULL,'L-0073',7,NULL),
-('TN_SOR_2025','E1','LABOUR','Female Coolie',NULL,'L-0098',10,NULL);
-
-
 ALTER TABLE work_item_analysis
 ADD equipment_code VARCHAR(20) NULL;
 
@@ -729,3 +710,569 @@ CASE
     ELSE unit
 END;
 SET SQL_SAFE_UPDATES = 1;
+
+CREATE TABLE IF NOT EXISTS sor_equipment_data (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    sor_code VARCHAR(50) NOT NULL,
+    unique_code VARCHAR(20) NOT NULL UNIQUE,
+    description TEXT NOT NULL,
+    unit VARCHAR(50) NOT NULL,
+    base_rate DECIMAL(12,2) NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (sor_code) REFERENCES sor_data(sor_code)
+);
+
+INSERT INTO sor_equipment_data (sor_code, unique_code, description, unit, base_rate) VALUES
+('TN_SOR_2025','H-0097','Pumping charges of concrete including hire charges of pump piping work and accessories etc.','cum.',268.40),
+('TN_SOR_2025','H-0098','Carriage of concrete by Transit Mixer','Km / Cum',38.06),
+('TN_SOR_2025','H-0099','Cutting Saw Machine','Day',1729.20),
+('TN_SOR_2025','H-0100','Concrete Jount Cutting Machine','Day',1152.80),
+('TN_SOR_2025','H-0101','Air Compressor 250 cfm. with two leads for Pneumatic Cutters / Hammers','Day',2050.40),
+('TN_SOR_2025','H-0102','Excavation of diaphragm wall by Mechanical Grab','Day',1666.50),
+('TN_SOR_2025','H-0103','Hire and running charges of Bentonite Pump','Day',4485.80),
+('TN_SOR_2025','H-0104','Hire and running charges of Crane 20 Tonne capacity','Day',8970.50),
+('TN_SOR_2025','H-0105','Hire and running charges of Crane 40 Tonne capacity','Day',10252.00),
+('TN_SOR_2025','H-0106','Hire and running charges of Crane 80 Tonne capacity','Day',19228.00),
+('TN_SOR_2025','H-0107','Tractor with Trailar including Driver and Fuel','Hour',600.00),
+('TN_SOR_2025','H-0108','Earth Excavator- Wheeled Backhoe loader 0.50 m3 capacity','Hour',784.00),
+('TN_SOR_2025','H-0109','Hire Charges for Surface Vibrator or Earth Rammer including Fuel','Day',1000.00),
+('TN_SOR_2025','H-0110','Mixer Machine with Hopper','Day',1500.00),
+('TN_SOR_2025','H-0111','Earth Excavator- Crawler / Tracked Excavator 1 m3 capacity','Hour',2000.00),
+('TN_SOR_2025','H-0112','Hire running charges for hydraulic piling Rigs including power accessories shifting from place to place','Hour',4000.00),
+('TN_SOR_2025','H-0113','Hire running charges for Light Crane','Hour',625.00),
+('TN_SOR_2025','H-0114','Hire running charges for Tipper','Hour',938.00),
+('TN_SOR_2025','H-0115','Hire running charges for Loader','Hour',729.00),
+('TN_SOR_2025','H-0116','Hire charges for Excavation Tools and Tackles','Day',500.00),
+('TN_SOR_2025','H-0117','Hire charges for Masonry Tools and Tackles','Day',450.00),
+('TN_SOR_2025','H-0118','Hire charges for Masonry Scaffolding','Day',750.00),
+('TN_SOR_2025','H-0119','Hire charges for Concrete Formwork','Day',2500.00),
+('TN_SOR_2025','H-0120','Hire charges for Concrete Shuttering','Day',3000.00),
+('TN_SOR_2025','H-0121','Hire charges for Concrete Tools and Tackles','Day',2000.00);
+
+
+ALTER TABLE sor_equipment_data
+DROP COLUMN created_at;
+
+USE arch_db;
+
+-- Optional: clear old rows for these items first
+DELETE FROM work_item_analysis
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('C3','D1','E3','E5');
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, quantity, remark)
+VALUES
+-- =========================
+-- C3 : RCC M30 (1:0.75:1.5)
+-- =========================
+('TN_SOR_2025','C3','MATERIAL','Coarse Aggregate','M-0088',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C3','MATERIAL','Fine Aggragete','M-0125',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C3','MATERIAL','Cement  (96 bags or 3.33 Cu.M)','M-0001',NULL,NULL,4.800,NULL),
+('TN_SOR_2025','C3','MATERIAL','Steel, Mild Steel bars @ 2% = 0.2 Cu.M','M-0002',NULL,NULL,1.570,'1 Cu.M of steel = 78.5 Quintals; 78.5Q x 0.2Cu.M = 15.7Q; 1Q = 0.1 MT'),
+('TN_SOR_2025','C3','MATERIAL','Binding Wire','M-0189',NULL,NULL,2.000,NULL),
+
+('TN_SOR_2025','C3','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,1.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Mason',NULL,'L-0029',NULL,3.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Male Coolie',NULL,'L-0073',NULL,4.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Female Coolie',NULL,'L-0098',NULL,4.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Blacksmith (II class) for bar bending',NULL,'L-0060',NULL,8.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Mazdoor for bar bending',NULL,'L-0098',NULL,8.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Carpenter (II class) for centering & shuttering',NULL,'L-0063',NULL,10.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Mazdoor for centering & shuttering',NULL,'L-0098',NULL,10.000,NULL),
+
+('TN_SOR_2025','C3','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',0.750,NULL),
+('TN_SOR_2025','C3','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',1.000,NULL),
+('TN_SOR_2025','C3','EQUIPMENT','Formwork',NULL,NULL,'H-0119',1.000,NULL),
+('TN_SOR_2025','C3','EQUIPMENT','Shuttering',NULL,NULL,'H-0120',1.000,NULL),
+('TN_SOR_2025','C3','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0121',1.000,NULL),
+
+-- ============================================
+-- D1 : Masonry Burnt Brick with 1:6 CM mortar
+-- ============================================
+('TN_SOR_2025','D1','MATERIAL','Brick (500 bricks per Cu.M)','M-0003',NULL,NULL,5000.000,NULL),
+('TN_SOR_2025','D1','MATERIAL','Cement (13.5 bags or 0.45 Cu.M)','M-0001',NULL,NULL,0.648,'Weight = Volume x Density = 0.45 x 1440'),
+('TN_SOR_2025','D1','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,2.700,NULL),
+
+('TN_SOR_2025','D1','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,1.000,NULL),
+('TN_SOR_2025','D1','LABOUR','Mason',NULL,'L-0029',NULL,10.000,NULL),
+('TN_SOR_2025','D1','LABOUR','Male Coolie',NULL,'L-0073',NULL,10.000,NULL),
+('TN_SOR_2025','D1','LABOUR','Female Coolie',NULL,'L-0098',NULL,7.000,NULL),
+
+('TN_SOR_2025','D1','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',1.000,NULL),
+('TN_SOR_2025','D1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',1.000,NULL),
+
+-- ==========================================
+-- E3 : Cement Mortor 1:4 (20mm plastering)
+-- ==========================================
+('TN_SOR_2025','E3','MATERIAL','Cement (19.5 bags or 0.65 Cu.M)','M-0001',NULL,NULL,0.936,NULL),
+('TN_SOR_2025','E3','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,2.600,NULL),
+
+('TN_SOR_2025','E3','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,1.000,NULL),
+('TN_SOR_2025','E3','LABOUR','Mason',NULL,'L-0029',NULL,10.000,NULL),
+('TN_SOR_2025','E3','LABOUR','Male Coolie',NULL,'L-0073',NULL,10.000,NULL),
+('TN_SOR_2025','E3','LABOUR','Female Coolie',NULL,'L-0098',NULL,5.000,NULL),
+
+('TN_SOR_2025','E3','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',1.000,NULL),
+('TN_SOR_2025','E3','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',1.000,NULL),
+
+-- ==========================================
+-- E5 : Cement Mortor 1:6 (12mm plastering)
+-- ==========================================
+('TN_SOR_2025','E5','MATERIAL','Cement (9 bags or 0.30 Cu.M)','M-0001',NULL,NULL,0.432,NULL),
+('TN_SOR_2025','E5','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,1.800,NULL),
+
+('TN_SOR_2025','E5','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,1.000,NULL),
+('TN_SOR_2025','E5','LABOUR','Mason',NULL,'L-0029',NULL,10.000,NULL),
+('TN_SOR_2025','E5','LABOUR','Male Coolie',NULL,'L-0073',NULL,10.000,NULL),
+('TN_SOR_2025','E5','LABOUR','Female Coolie',NULL,'L-0098',NULL,5.000,NULL),
+
+('TN_SOR_2025','E5','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',1.000,NULL),
+('TN_SOR_2025','E5','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',1.000,NULL);
+
+UPDATE work_item_subpackage
+SET
+    analysis_quantity = 10,
+    analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('C3', 'D1');
+
+UPDATE work_item_subpackage
+SET
+    analysis_quantity = 100,
+    analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('E3', 'E5');
+
+USE arch_db;
+
+-- Drop old (if any)
+DROP TABLE IF EXISTS lead_lift_rate_detail;
+DROP TABLE IF EXISTS lead_lift_item_master;
+
+-- 1) Item master (your 5 working items)
+CREATE TABLE lead_lift_item_master (
+    sor_code VARCHAR(50) NOT NULL,
+    ll_code VARCHAR(10) NOT NULL,              -- LL1..LL5
+    item_name VARCHAR(180) NOT NULL,
+    profile_code VARCHAR(10) NOT NULL,         -- TP1..TP6 mapping
+    distance_km DECIMAL(10,2) NOT NULL,        -- editable project distance
+
+    PRIMARY KEY (sor_code, ll_code),
+    UNIQUE KEY uq_ll_item (sor_code, item_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 2) Rate detail (all top-grid data: coefficient, lift, slab rates)
+CREATE TABLE lead_lift_rate_detail (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    sor_code VARCHAR(50) NOT NULL,
+    profile_code VARCHAR(10) NOT NULL,
+    profile_name VARCHAR(255) NOT NULL,
+    unit VARCHAR(50) NOT NULL,
+
+    coefficient DECIMAL(10,4) NOT NULL,
+    incidental_charges DECIMAL(12,2) NOT NULL DEFAULT 0,
+    loading_charges DECIMAL(12,2) NOT NULL DEFAULT 0,
+    unloading_charges DECIMAL(12,2) NOT NULL DEFAULT 0,
+
+    slab_order TINYINT NOT NULL,               -- 1..5
+    slab_from_km DECIMAL(10,2) NOT NULL,
+    slab_to_km DECIMAL(10,2) NULL,             -- NULL => Above 80
+    rate_per_km DECIMAL(12,2) NOT NULL,
+
+    UNIQUE KEY uq_profile_slab (sor_code, profile_code, slab_order)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT INTO lead_lift_item_master (sor_code, ll_code, item_name, profile_code, distance_km)
+VALUES
+('TN_SOR_2025','LL1','Cement','TP1',15.00),
+('TN_SOR_2025','LL2','Steel','TP1',11.00),
+('TN_SOR_2025','LL3','Course Aggregate','TP3',20.00),
+('TN_SOR_2025','LL4','Fine Aggregate','TP3',25.00),
+('TN_SOR_2025','LL5','Burnt Brick (230mm X 115mm X 75mm)','TP6',15.00);
+
+INSERT INTO lead_lift_rate_detail
+(sor_code, profile_code, profile_name, unit, coefficient, incidental_charges, loading_charges, unloading_charges, slab_order, slab_from_km, slab_to_km, rate_per_km)
+VALUES
+-- TP1
+('TN_SOR_2025','TP1','Cement, Steel (1 MT)','MT',1.00,0.00,135.50,135.50,1,0.00,10.00,7.36),
+('TN_SOR_2025','TP1','Cement, Steel (1 MT)','MT',1.00,0.00,135.50,135.50,2,10.00,20.00,6.30),
+('TN_SOR_2025','TP1','Cement, Steel (1 MT)','MT',1.00,0.00,135.50,135.50,3,20.00,40.00,5.42),
+('TN_SOR_2025','TP1','Cement, Steel (1 MT)','MT',1.00,0.00,135.50,135.50,4,40.00,80.00,4.66),
+('TN_SOR_2025','TP1','Cement, Steel (1 MT)','MT',1.00,0.00,135.50,135.50,5,80.00,NULL,4.26),
+
+-- TP2
+('TN_SOR_2025','TP2','Lime Stone, Laterite, Brick Jelly, Wood Work, Pond Ash (Wet / Dry), Stone Dust (1Cu.M)','Cu.M',1.10,0.00,64.65,64.65,1,0.00,10.00,8.08),
+('TN_SOR_2025','TP2','Lime Stone, Laterite, Brick Jelly, Wood Work, Pond Ash (Wet / Dry), Stone Dust (1Cu.M)','Cu.M',1.10,0.00,64.65,64.65,2,10.00,20.00,6.92),
+('TN_SOR_2025','TP2','Lime Stone, Laterite, Brick Jelly, Wood Work, Pond Ash (Wet / Dry), Stone Dust (1Cu.M)','Cu.M',1.10,0.00,64.65,64.65,3,20.00,40.00,5.97),
+('TN_SOR_2025','TP2','Lime Stone, Laterite, Brick Jelly, Wood Work, Pond Ash (Wet / Dry), Stone Dust (1Cu.M)','Cu.M',1.10,0.00,64.65,64.65,4,40.00,80.00,5.15),
+('TN_SOR_2025','TP2','Lime Stone, Laterite, Brick Jelly, Wood Work, Pond Ash (Wet / Dry), Stone Dust (1Cu.M)','Cu.M',1.10,0.00,64.65,64.65,5,80.00,NULL,4.69),
+
+-- TP3
+('TN_SOR_2025','TP3','Rough Stone, Bond Stone, Cut Stone, Broken Stone Jelly, Sand, Gravel, Surki, Earth, Crushed Stone Sand (1Cu.M)','Cu.M',1.60,0.00,44.25,44.25,1,0.00,10.00,11.79),
+('TN_SOR_2025','TP3','Rough Stone, Bond Stone, Cut Stone, Broken Stone Jelly, Sand, Gravel, Surki, Earth, Crushed Stone Sand (1Cu.M)','Cu.M',1.60,0.00,44.25,44.25,2,10.00,20.00,10.08),
+('TN_SOR_2025','TP3','Rough Stone, Bond Stone, Cut Stone, Broken Stone Jelly, Sand, Gravel, Surki, Earth, Crushed Stone Sand (1Cu.M)','Cu.M',1.60,0.00,44.25,44.25,3,20.00,40.00,8.67),
+('TN_SOR_2025','TP3','Rough Stone, Bond Stone, Cut Stone, Broken Stone Jelly, Sand, Gravel, Surki, Earth, Crushed Stone Sand (1Cu.M)','Cu.M',1.60,0.00,44.25,44.25,4,40.00,80.00,8.13),
+('TN_SOR_2025','TP3','Rough Stone, Bond Stone, Cut Stone, Broken Stone Jelly, Sand, Gravel, Surki, Earth, Crushed Stone Sand (1Cu.M)','Cu.M',1.60,0.00,44.25,44.25,5,80.00,NULL,6.82),
+
+-- TP4
+('TN_SOR_2025','TP4','Third Class Country Bricks (Kiln Burnt) (1000 Nos.)','1000 Nos.',1.35,0.00,63.60,63.60,1,0.00,10.00,9.94),
+('TN_SOR_2025','TP4','Third Class Country Bricks (Kiln Burnt) (1000 Nos.)','1000 Nos.',1.35,0.00,63.60,63.60,2,10.00,20.00,8.51),
+('TN_SOR_2025','TP4','Third Class Country Bricks (Kiln Burnt) (1000 Nos.)','1000 Nos.',1.35,0.00,63.60,63.60,3,20.00,40.00,7.30),
+('TN_SOR_2025','TP4','Third Class Country Bricks (Kiln Burnt) (1000 Nos.)','1000 Nos.',1.35,0.00,63.60,63.60,4,40.00,80.00,6.30),
+('TN_SOR_2025','TP4','Third Class Country Bricks (Kiln Burnt) (1000 Nos.)','1000 Nos.',1.35,0.00,63.60,63.60,5,80.00,NULL,5.76),
+
+-- TP5
+('TN_SOR_2025','TP5','Mangalore Tiles (1000 Nos), Machine Pressed Tiles (2000 Nos), Hydraulically Pressed Mosaic Flooring Tiles (1500 Nos)','Nos.',1.80,0.00,63.60,63.60,1,0.00,10.00,13.26),
+('TN_SOR_2025','TP5','Mangalore Tiles (1000 Nos), Machine Pressed Tiles (2000 Nos), Hydraulically Pressed Mosaic Flooring Tiles (1500 Nos)','Nos.',1.80,0.00,63.60,63.60,2,10.00,20.00,11.35),
+('TN_SOR_2025','TP5','Mangalore Tiles (1000 Nos), Machine Pressed Tiles (2000 Nos), Hydraulically Pressed Mosaic Flooring Tiles (1500 Nos)','Nos.',1.80,0.00,63.60,63.60,3,20.00,40.00,9.76),
+('TN_SOR_2025','TP5','Mangalore Tiles (1000 Nos), Machine Pressed Tiles (2000 Nos), Hydraulically Pressed Mosaic Flooring Tiles (1500 Nos)','Nos.',1.80,0.00,63.60,63.60,4,40.00,80.00,8.41),
+('TN_SOR_2025','TP5','Mangalore Tiles (1000 Nos), Machine Pressed Tiles (2000 Nos), Hydraulically Pressed Mosaic Flooring Tiles (1500 Nos)','Nos.',1.80,0.00,63.60,63.60,5,80.00,NULL,7.68),
+
+-- TP6
+('TN_SOR_2025','TP6','Bricks II Class Chamber Burnt Bricks (Table Moulded / Ground Moulded), Fly Ash Bricks (1000 Nos.)','1000 Nos.',2.25,0.00,63.60,63.60,1,0.00,10.00,16.57),
+('TN_SOR_2025','TP6','Bricks II Class Chamber Burnt Bricks (Table Moulded / Ground Moulded), Fly Ash Bricks (1000 Nos.)','1000 Nos.',2.25,0.00,63.60,63.60,2,10.00,20.00,14.19),
+('TN_SOR_2025','TP6','Bricks II Class Chamber Burnt Bricks (Table Moulded / Ground Moulded), Fly Ash Bricks (1000 Nos.)','1000 Nos.',2.25,0.00,63.60,63.60,3,20.00,40.00,12.19),
+('TN_SOR_2025','TP6','Bricks II Class Chamber Burnt Bricks (Table Moulded / Ground Moulded), Fly Ash Bricks (1000 Nos.)','1000 Nos.',2.25,0.00,63.60,63.60,4,40.00,80.00,10.52),
+('TN_SOR_2025','TP6','Bricks II Class Chamber Burnt Bricks (Table Moulded / Ground Moulded), Fly Ash Bricks (1000 Nos.)','1000 Nos.',2.25,0.00,63.60,63.60,5,80.00,NULL,9.60);
+
+SELECT
+    i.item_name AS Items,
+    i.distance_km AS `Distance (Km)`,
+    ROUND(SUM(
+        GREATEST(
+            LEAST(i.distance_km, COALESCE(d.slab_to_km, i.distance_km)) - d.slab_from_km,
+            0
+        ) * d.rate_per_km
+    ) + MAX(d.incidental_charges), 2) AS `Total Transport Charges`,
+    ROUND(MAX(d.loading_charges + d.unloading_charges), 2) AS `Total Lift Charges`,
+    ROUND(
+        SUM(
+            GREATEST(
+                LEAST(i.distance_km, COALESCE(d.slab_to_km, i.distance_km)) - d.slab_from_km,
+                0
+            ) * d.rate_per_km
+        ) + MAX(d.incidental_charges) + MAX(d.loading_charges + d.unloading_charges),
+        2
+    ) AS `Total Charges`
+FROM lead_lift_item_master i
+JOIN lead_lift_rate_detail d
+  ON d.sor_code = i.sor_code
+ AND d.profile_code = i.profile_code
+WHERE i.sor_code = 'TN_SOR_2025'
+GROUP BY i.ll_code, i.item_name, i.distance_km
+ORDER BY i.ll_code;
+
+USE arch_db;
+
+-- 1) Extend resource_type enum
+ALTER TABLE work_item_analysis
+MODIFY resource_type ENUM('MATERIAL','LABOUR','EQUIPMENT','LEAD & LIFT') NOT NULL;
+
+-- 2) Add lead_lift_code column
+ALTER TABLE work_item_analysis
+ADD lead_lift_code VARCHAR(10) NULL AFTER equipment_code;
+
+-- 3) Add FK to LL master (sor_code + ll_code)
+ALTER TABLE work_item_analysis
+ADD CONSTRAINT fk_wia_lead_lift
+FOREIGN KEY (sor_code, lead_lift_code)
+REFERENCES lead_lift_item_master (sor_code, ll_code);
+
+INSERT INTO work_item_analysis
+(
+  sor_code,
+  subpackage_code,
+  resource_type,
+  item,
+  material_code,
+  labour_code,
+  equipment_code,
+  lead_lift_code,
+  quantity,
+  remark
+)
+VALUES
+-- C3 (from C3 sheet Lead & Lift section)
+('TN_SOR_2025','C3','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',8.000,NULL),
+('TN_SOR_2025','C3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.000,NULL),
+('TN_SOR_2025','C3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',4.800,NULL),
+('TN_SOR_2025','C3','LEAD & LIFT','Steel',NULL,NULL,NULL,'LL2',1.570,NULL),
+
+-- D1
+('TN_SOR_2025','D1','LEAD & LIFT','Burnt Brick (230mm X 115mm X 75mm)',NULL,NULL,NULL,'LL5',5000.000,NULL),
+('TN_SOR_2025','D1','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.648,NULL),
+('TN_SOR_2025','D1','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.700,NULL),
+
+-- E3
+('TN_SOR_2025','E3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.936,NULL),
+('TN_SOR_2025','E3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.600,NULL),
+
+-- E5
+('TN_SOR_2025','E5','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.432,NULL),
+('TN_SOR_2025','E5','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',1.800,NULL);
+
+INSERT INTO work_item_rate (sor_code, subpackage_code, amount)
+SELECT
+    s.sor_code,
+    s.subpackage_code,
+    CEILING((t.total_a * (1 + cf.pct)) / s.analysis_quantity) AS rate_per_unit
+FROM work_item_subpackage s
+JOIN (
+    SELECT
+        a.sor_code,
+        a.subpackage_code,
+        SUM(
+            CASE a.resource_type
+                WHEN 'MATERIAL' THEN (a.quantity / COALESCE(m.unit_multiplier, 1)) * m.base_rate
+                WHEN 'LABOUR'   THEN (a.quantity / COALESCE(l.unit_multiplier, 1)) * l.base_rate
+                WHEN 'EQUIPMENT' THEN a.quantity * e.base_rate
+                WHEN 'LEAD & LIFT' THEN (a.quantity / COALESCE(ll.unit_multiplier, 1)) * ll.total_charge_per_unit
+                ELSE 0
+            END
+        ) AS total_a
+    FROM work_item_analysis a
+    LEFT JOIN sor_material_data  m
+        ON a.resource_type = 'MATERIAL'
+       AND a.material_code = m.unique_code
+    LEFT JOIN sor_labour_data l
+        ON a.resource_type = 'LABOUR'
+       AND a.labour_code = l.unique_code
+    LEFT JOIN sor_equipment_data e
+        ON a.resource_type = 'EQUIPMENT'
+       AND a.equipment_code = e.unique_code
+    LEFT JOIN (
+        SELECT
+            i.sor_code,
+            i.ll_code,
+            CASE
+                WHEN MAX(d.unit) LIKE '1000%' THEN 1000
+                WHEN MAX(d.unit) LIKE '100 Nos%' THEN 100
+                ELSE 1
+            END AS unit_multiplier,
+            ROUND(
+                SUM(
+                    GREATEST(
+                        LEAST(i.distance_km, COALESCE(d.slab_to_km, i.distance_km)) - d.slab_from_km,
+                        0
+                    ) * d.rate_per_km
+                )
+                + MAX(d.incidental_charges)
+                + MAX(d.loading_charges + d.unloading_charges),
+                2
+            ) AS total_charge_per_unit
+        FROM lead_lift_item_master i
+        JOIN lead_lift_rate_detail d
+          ON d.sor_code = i.sor_code
+         AND d.profile_code = i.profile_code
+        WHERE i.sor_code = 'TN_SOR_2025'
+        GROUP BY i.sor_code, i.ll_code
+    ) ll
+        ON a.resource_type = 'LEAD & LIFT'
+       AND a.sor_code = ll.sor_code
+       AND a.lead_lift_code = ll.ll_code
+    WHERE a.sor_code = 'TN_SOR_2025'
+      AND a.subpackage_code IN ('C3','D1','E3','E5')
+    GROUP BY a.sor_code, a.subpackage_code
+) t
+    ON t.sor_code = s.sor_code
+   AND t.subpackage_code = s.subpackage_code
+CROSS JOIN (
+    SELECT COALESCE(SUM(percentage), 0) / 100.0 AS pct
+    FROM work_item_charges
+) cf
+WHERE s.sor_code = 'TN_SOR_2025'
+  AND s.subpackage_code IN ('C3','D1','E3','E5')
+  AND s.analysis_quantity IS NOT NULL
+  AND s.analysis_quantity > 0
+ON DUPLICATE KEY UPDATE amount = VALUES(amount);
+
+USE arch_db;
+
+-- =========================================================
+-- 1) PROJECT MASTER TABLE
+-- =========================================================
+CREATE TABLE IF NOT EXISTS project_master (
+    project_code VARCHAR(50) NOT NULL,
+    project_name VARCHAR(255) NOT NULL,
+    project_location TEXT NOT NULL,
+    client_name VARCHAR(255) NOT NULL,
+    site_area DECIMAL(18,3) NULL,
+    total_builtup_area DECIMAL(18,3) NULL,
+    building_height DECIMAL(18,3) NULL,
+    date_of_issue DATE NULL,
+    estimator_name VARCHAR(255) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+    sor_database VARCHAR(100) NOT NULL,     -- example: TN_SOR_2025
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (project_code, ifc_file_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- =========================================================
+-- 2) MASONRY MATERIAL TAKE-OFF (from Wall.py shape)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS masonry_material_takeoff (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+
+    express_id BIGINT NOT NULL,             -- from Wall.py
+    global_id VARCHAR(64) NULL,
+    family VARCHAR(255) NULL,
+    type_name VARCHAR(255) NULL,
+    base_constraint VARCHAR(255) NULL,
+    length_val DECIMAL(18,6) NULL,
+    width_val DECIMAL(18,6) NULL,
+    material_name VARCHAR(180) NOT NULL,
+    material_description TEXT NULL,
+    material_area DECIMAL(18,6) NULL,
+    material_volume DECIMAL(18,6) NULL,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_masonry_entry (project_code, ifc_file_name, express_id, material_name),
+    KEY idx_masonry_proj_ifc (project_code, ifc_file_name),
+
+    CONSTRAINT fk_masonry_proj
+      FOREIGN KEY (project_code, ifc_file_name)
+      REFERENCES project_master(project_code, ifc_file_name)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- =========================================================
+-- 3) MASONRY SUMMARY
+-- =========================================================
+CREATE TABLE IF NOT EXISTS masonry_summary (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+
+    material_name VARCHAR(180) NOT NULL,
+    material_description TEXT NULL,
+    total_material_area DECIMAL(18,6) NULL,
+    total_material_volume DECIMAL(18,6) NULL,
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_masonry_summary (project_code, ifc_file_name, material_name),
+    KEY idx_masonry_summary_proj_ifc (project_code, ifc_file_name),
+
+    CONSTRAINT fk_masonry_summary_proj
+      FOREIGN KEY (project_code, ifc_file_name)
+      REFERENCES project_master(project_code, ifc_file_name)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- =========================================================
+-- 4) PLASTERING MATERIAL TAKE-OFF
+-- (same structure as wall-derived takeoff for now)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS plastering_material_takeoff (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+
+    express_id BIGINT NOT NULL,
+    global_id VARCHAR(64) NULL,
+    family VARCHAR(255) NULL,
+    type_name VARCHAR(255) NULL,
+    base_constraint VARCHAR(255) NULL,
+    length_val DECIMAL(18,6) NULL,
+    width_val DECIMAL(18,6) NULL,
+    material_name VARCHAR(180) NOT NULL,
+    material_description TEXT NULL,
+    material_area DECIMAL(18,6) NULL,
+    material_volume DECIMAL(18,6) NULL,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_plastering_entry (project_code, ifc_file_name, express_id, material_name),
+    KEY idx_plastering_proj_ifc (project_code, ifc_file_name),
+
+    CONSTRAINT fk_plastering_proj
+      FOREIGN KEY (project_code, ifc_file_name)
+      REFERENCES project_master(project_code, ifc_file_name)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- =========================================================
+-- 5) PLASTERING SUMMARY
+-- =========================================================
+CREATE TABLE IF NOT EXISTS plastering_summary (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+
+    material_name VARCHAR(180) NOT NULL,
+    material_description TEXT NULL,
+    total_material_area DECIMAL(18,6) NULL,
+    total_material_volume DECIMAL(18,6) NULL,
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_plastering_summary (project_code, ifc_file_name, material_name),
+    KEY idx_plastering_summary_proj_ifc (project_code, ifc_file_name),
+
+    CONSTRAINT fk_plastering_summary_proj
+      FOREIGN KEY (project_code, ifc_file_name)
+      REFERENCES project_master(project_code, ifc_file_name)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- =========================================================
+-- 6) RCC MATERIAL TAKE-OFF (from RCC.py shape)
+-- =========================================================
+CREATE TABLE IF NOT EXISTS rcc_material_takeoff (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+
+    express_id BIGINT NOT NULL,             -- from RCC.py
+    global_id VARCHAR(64) NULL,
+    family VARCHAR(255) NULL,
+    type_name VARCHAR(255) NULL,
+    level_name VARCHAR(255) NULL,
+    material_name VARCHAR(180) NOT NULL,
+    material_description TEXT NULL,
+    material_volume DECIMAL(18,6) NULL,
+
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_rcc_entry (project_code, ifc_file_name, express_id, material_name),
+    KEY idx_rcc_proj_ifc (project_code, ifc_file_name),
+
+    CONSTRAINT fk_rcc_proj
+      FOREIGN KEY (project_code, ifc_file_name)
+      REFERENCES project_master(project_code, ifc_file_name)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+-- =========================================================
+-- 7) RCC SUMMARY
+-- =========================================================
+CREATE TABLE IF NOT EXISTS rcc_summary (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    project_code VARCHAR(50) NOT NULL,
+    ifc_file_name VARCHAR(255) NOT NULL,
+
+    material_name VARCHAR(180) NOT NULL,
+    material_description TEXT NULL,
+    total_material_volume DECIMAL(18,6) NULL,
+
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_rcc_summary (project_code, ifc_file_name, material_name),
+    KEY idx_rcc_summary_proj_ifc (project_code, ifc_file_name),
+
+    CONSTRAINT fk_rcc_summary_proj
+      FOREIGN KEY (project_code, ifc_file_name)
+      REFERENCES project_master(project_code, ifc_file_name)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
