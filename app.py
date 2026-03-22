@@ -508,8 +508,8 @@ def fetch_qto_report(project_code, ifc_file_name):
             """
             SELECT material_name AS `Material:Name`,
                    material_description AS `Material:Description`,
-                   ROUND(total_material_area,2) AS `Total Area`,
-                   ROUND(total_material_volume,2) AS `Total Volume`
+                   ROUND(total_material_area,2) AS `Total Area (m²)`,
+                   ROUND(total_material_volume,2) AS `Total Volume (m³)`
             FROM masonry_summary
             WHERE project_code=%s AND ifc_file_name=%s
             ORDER BY material_name
@@ -522,8 +522,8 @@ def fetch_qto_report(project_code, ifc_file_name):
             """
             SELECT material_name AS `Material:Name`,
                    material_description AS `Material:Description`,
-                   ROUND(total_material_area,2) AS `Total Area`,
-                   ROUND(total_material_volume,2) AS `Total Volume`
+                   ROUND(total_material_area,2) AS `Total Area (m²)`,
+                   ROUND(total_material_volume,2) AS `Total Volume (m³)`
             FROM plastering_summary
             WHERE project_code=%s AND ifc_file_name=%s
             ORDER BY material_name
@@ -536,7 +536,7 @@ def fetch_qto_report(project_code, ifc_file_name):
             """
             SELECT material_name AS `Material:Name`,
                    material_description AS `Material:Description`,
-                   ROUND(total_material_volume,2) AS `Total Volume`
+                   ROUND(total_material_volume,2) AS `Total Volume (m³)`
             FROM rcc_summary
             WHERE project_code=%s AND ifc_file_name=%s
             ORDER BY material_name
@@ -789,10 +789,10 @@ def build_tender_estimate(project_code, ifc_file_name):
                 {
                     "Work Item Code": code,
                     "Item": item,
-                    "Area / Volume": f"{qty:,.3f}",
+                    "Area / Volume (m³)": f"{qty:,.3f}",
                     "Unit": unit,
-                    "Price": f"{price:,.2f}",
-                    "Amount": f"{amount:,.2f}",
+                    "Price (₹)": f"{price:,.2f}",
+                    "Amount (₹)": f"{amount:,.2f}",
                 }
             )
 
@@ -804,13 +804,14 @@ def build_tender_estimate(project_code, ifc_file_name):
 def build_tender_estimate_csv_bytes(rows, grand_total):
     output = io.StringIO()
     writer = csv.writer(output)
-    headers = ["Work Item Code", "Item", "Area / Volume", "Unit", "Price", "Amount"]
+    headers = ["Work Item Code", "Item", "Area / Volume (m³)", "Unit", "Price (₹)", "Amount (₹)"]
     writer.writerow(headers)
     for row in rows:
         writer.writerow([row.get(h, "") for h in headers])
     writer.writerow([])
-    writer.writerow(["", "", "", "", "Grand Total", f"{grand_total:,.2f}"])
-    return output.getvalue().encode("utf-8")
+    writer.writerow(["", "", "", "", "Grand Total", f"₹ {grand_total:,.2f}"])
+    # Excel on Windows often mis-detects UTF-8 CSV without BOM (shows ₹ as â‚¹).
+    return output.getvalue().encode("utf-8-sig")
 
 
 def render_simple_table(rows):
@@ -1348,7 +1349,7 @@ elif st.session_state.step == 4:
 
     if estimate_rows:
         render_simple_table(estimate_rows)
-        st.markdown(f"### Grand Total: {grand_total:,.2f}")
+        st.markdown(f"### Grand Total: ₹ {grand_total:,.2f}")
         csv_bytes = build_tender_estimate_csv_bytes(estimate_rows, grand_total)
         st.download_button(
             "Export Rate Table (CSV)",
