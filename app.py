@@ -1414,7 +1414,7 @@ if st.session_state.step == 1:
         c1, c2, c3 = st.columns(3)
         with c1:
             site_area = st.number_input(
-                "Site Area",
+                "Site Area (Sq.M)",
                 min_value=0.0,
                 step=1.0,
                 format="%.3f",
@@ -1422,7 +1422,7 @@ if st.session_state.step == 1:
             )
         with c2:
             total_builtup_area = st.number_input(
-                "Total Built-Up Area",
+                "Total Built-Up Area (Sq.M)",
                 min_value=0.0,
                 step=1.0,
                 format="%.3f",
@@ -1430,7 +1430,7 @@ if st.session_state.step == 1:
             )
         with c3:
             building_height = st.number_input(
-                "Building Height",
+                "Building Height (M)",
                 min_value=0.0,
                 step=0.1,
                 format="%.3f",
