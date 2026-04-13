@@ -554,6 +554,11 @@ INSERT INTO work_item_package (sor_code, package_code, package_name) VALUES
 ('TN_SOR_2025','H','UPVC'),
 ('TN_SOR_2025','I','Fabrication Work');
 
+ALTER TABLE work_item_subpackage
+ADD COLUMN analysis_quantity DECIMAL(10,2) NULL,
+ADD COLUMN analysis_unit VARCHAR(20) NULL;
+
+
 INSERT INTO work_item_subpackage
 (sor_code, package_code, subpackage_code, subpackage_name, description, analysis_quantity, analysis_unit)
 VALUES
@@ -660,17 +665,6 @@ CREATE TABLE work_item_analysis (
     FOREIGN KEY (labour_code)
         REFERENCES sor_labour_data(unique_code)
 );
-
-
-ALTER TABLE work_item_subpackage
-ADD analysis_quantity DECIMAL(10,2),
-ADD analysis_unit VARCHAR(20);
-
-UPDATE work_item_subpackage
-SET analysis_quantity = 10,
-analysis_unit = 'Cu.M'
-WHERE sor_code = 'TN_SOR_2025'
-AND subpackage_code = 'E1';
 
 ALTER TABLE work_item_analysis
 ADD item VARCHAR(255) AFTER resource_type;

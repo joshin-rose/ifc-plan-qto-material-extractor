@@ -74,14 +74,29 @@ def split_family_type(name: str) -> Tuple[str, str]:
 
 def get_pset_value(element, property_name: str) -> str:
     for rel in getattr(element, "IsDefinedBy", []) or []:
-        if not rel.is_a("IfcRelDefinesByProperties"):
-            continue
-        pdef = rel.RelatingPropertyDefinition
-        if not pdef or not pdef.is_a("IfcPropertySet"):
-            continue
-        for prop in pdef.HasProperties or []:
-            if prop.is_a("IfcPropertySingleValue") and prop.Name == property_name:
-                return s(unwrap(prop.NominalValue))
+        # Element-level property sets
+        if rel.is_a("IfcRelDefinesByProperties"):
+            pdef = rel.RelatingPropertyDefinition
+            if pdef and pdef.is_a("IfcPropertySet"):
+                for prop in pdef.HasProperties or []:
+                    if (
+                        prop.is_a("IfcPropertySingleValue")
+                        and s(prop.Name).strip().lower() == property_name.strip().lower()
+                    ):
+                        return s(unwrap(prop.NominalValue))
+
+        # Type-level property sets (common in Revit exports)
+        if rel.is_a("IfcRelDefinesByType"):
+            rtype = getattr(rel, "RelatingType", None)
+            for pset in getattr(rtype, "HasPropertySets", []) or []:
+                if not pset or not pset.is_a("IfcPropertySet"):
+                    continue
+                for prop in pset.HasProperties or []:
+                    if (
+                        prop.is_a("IfcPropertySingleValue")
+                        and s(prop.Name).strip().lower() == property_name.strip().lower()
+                    ):
+                        return s(unwrap(prop.NominalValue))
     return ""
 
 
@@ -91,6 +106,15 @@ def get_level(element) -> str:
         if st and st.is_a("IfcBuildingStorey"):
             return s(getattr(st, "Name", ""))
     return get_pset_value(element, "Base Constraint")
+
+
+def get_element_description(element) -> str:
+    # Prefer explicit Description property from element/property set
+    pset_desc = get_pset_value(element, "Description")
+    if pset_desc:
+        return pset_desc
+    # Fallback to element's native Description attribute
+    return s(getattr(element, "Description", ""))
 
 
 def get_quantities(element) -> Dict[str, str]:
@@ -251,6 +275,7 @@ def build_rows(model) -> List[Dict[str, str]]:
         family = get_pset_value(element, "Family") or family_from_name
         type_name = get_pset_value(element, "Type") or type_from_name
         level = get_level(element)
+        element_desc = get_element_description(element)
 
         qto = get_quantities(element)
         element_area, element_area_source = pick_material_area_with_source(qto, s(element.is_a()))
@@ -263,10 +288,12 @@ def build_rows(model) -> List[Dict[str, str]]:
         for mat in material_rows:
             mat_name = s(mat["Material:Name"])
             mat_desc = s(mat["Material:Description"])
+            # Use element Description (if available) over generic material description.
+            final_desc = element_desc or mat_desc
 
             if not (
                 is_rcc_text(mat_name)
-                or is_rcc_text(mat_desc)
+                or is_rcc_text(final_desc)
                 or is_rcc_text(family)
                 or is_rcc_text(type_name)
                 or is_rcc_text(name)
@@ -281,7 +308,7 @@ def build_rows(model) -> List[Dict[str, str]]:
                     "Type": type_name,
                     "Level": level,
                     "Material:Name": mat_name,
-                    "Material:Description": mat_desc,
+                    "Material:Description": final_desc,
                     "Material:Volume": mat["Material:Volume"],
                 }
             )

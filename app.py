@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import uuid
 import tempfile
@@ -506,44 +506,137 @@ def fetch_qto_report(project_code, ifc_file_name):
 
         cur.execute(
             """
-            SELECT material_name AS `Material:Name`,
-                   material_description AS `Material:Description`,
-                   ROUND(total_material_area,2) AS `Total Area (m²)`,
-                   ROUND(total_material_volume,2) AS `Total Volume (m³)`
-            FROM masonry_summary
+            SELECT sor_database
+            FROM project_master
             WHERE project_code=%s AND ifc_file_name=%s
-            ORDER BY material_name
+            LIMIT 1
             """,
             (project_code, ifc_file_name),
         )
-        masonry = cur.fetchall()
+        project = cur.fetchone() or {}
+        sor_code = (project.get("sor_database") or "").strip()
+
+        catalog = []
+        if sor_code:
+            cur.execute(
+                """
+                SELECT s.subpackage_code, s.subpackage_name, s.package_code, s.analysis_unit, p.package_name
+                FROM work_item_subpackage s
+                LEFT JOIN work_item_package p
+                  ON p.sor_code = s.sor_code
+                 AND p.package_code = s.package_code
+                WHERE s.sor_code = %s
+                """,
+                (sor_code,),
+            )
+            catalog = cur.fetchall()
+
+        def _build_section_rows(rows, include_area):
+            normalized = []
+            for row in rows:
+                material_name = row.get("material_name") or ""
+                material_description = row.get("material_description") or ""
+                family = (row.get("family") or "").strip()
+                type_name = (row.get("type_name") or "").strip()
+                total_area = float(row.get("total_area") or 0.0)
+                total_volume = float(row.get("total_volume") or 0.0)
+
+                matched = resolve_subpackage_row(material_name, material_description, catalog) if catalog else None
+                work_item_code = ""
+                if matched:
+                    work_item_code = (matched.get("subpackage_code") or "").strip() or (matched.get("package_code") or "").strip()
+
+                normalized.append(
+                    {
+                        "work_item_code": work_item_code,
+                        "family": family,
+                        "type_name": type_name,
+                        "material_name": material_name,
+                        "material_description": material_description,
+                        "total_area": total_area,
+                        "total_volume": total_volume,
+                    }
+                )
+
+            normalized.sort(
+                key=lambda r: (
+                    r["work_item_code"],
+                    r["family"],
+                    r["type_name"],
+                    r["material_name"],
+                )
+            )
+
+            out = []
+
+            for r in normalized:
+                row_out = {
+                    "Work Item Code": r["work_item_code"],
+                    "Family": r["family"],
+                    "Type": r["type_name"],
+                    "Wastage (%)": "0.00",
+                    "Material:Name": r["material_name"],
+                    "Material:Description": r["material_description"],
+                    "Total Volume (m\u00B3)": f"{r['total_volume']:,.3f}",
+                }
+                if include_area:
+                    row_out["Total Area (m\u00B2)"] = f"{r['total_area']:,.3f}"
+                out.append(row_out)
+
+            return out
 
         cur.execute(
             """
-            SELECT material_name AS `Material:Name`,
-                   material_description AS `Material:Description`,
-                   ROUND(total_material_area,2) AS `Total Area (m²)`,
-                   ROUND(total_material_volume,2) AS `Total Volume (m³)`
-            FROM plastering_summary
+            SELECT
+                family,
+                type_name,
+                material_name,
+                material_description,
+                SUM(material_area) AS total_area,
+                SUM(material_volume) AS total_volume
+            FROM masonry_material_takeoff
             WHERE project_code=%s AND ifc_file_name=%s
-            ORDER BY material_name
+            GROUP BY family, type_name, material_name, material_description
+            ORDER BY family, type_name, material_name
             """,
             (project_code, ifc_file_name),
         )
-        plastering = cur.fetchall()
+        masonry = _build_section_rows(cur.fetchall(), include_area=True)
 
         cur.execute(
             """
-            SELECT material_name AS `Material:Name`,
-                   material_description AS `Material:Description`,
-                   ROUND(total_material_volume,2) AS `Total Volume (m³)`
-            FROM rcc_summary
+            SELECT
+                family,
+                type_name,
+                material_name,
+                material_description,
+                SUM(material_area) AS total_area,
+                SUM(material_volume) AS total_volume
+            FROM plastering_material_takeoff
             WHERE project_code=%s AND ifc_file_name=%s
-            ORDER BY material_name
+            GROUP BY family, type_name, material_name, material_description
+            ORDER BY family, type_name, material_name
             """,
             (project_code, ifc_file_name),
         )
-        rcc = cur.fetchall()
+        plastering = _build_section_rows(cur.fetchall(), include_area=True)
+
+        cur.execute(
+            """
+            SELECT
+                family,
+                type_name,
+                material_name,
+                material_description,
+                SUM(material_volume) AS total_volume
+            FROM rcc_material_takeoff
+            WHERE project_code=%s AND ifc_file_name=%s
+            GROUP BY family, type_name, material_name, material_description
+            ORDER BY family, type_name, material_name
+            """,
+            (project_code, ifc_file_name),
+        )
+        rcc = _build_section_rows(cur.fetchall(), include_area=False)
 
         return masonry, plastering, rcc
     finally:
@@ -689,7 +782,17 @@ def resolve_subpackage_row(material_name, material_description, catalog_rows):
     return None
 
 
-def build_tender_estimate(project_code, ifc_file_name):
+def _wastage_map_key(work_item_code, material_name, material_description=None):
+    return "||".join(
+        [
+            str(work_item_code or "").strip(),
+            str(material_name or "").strip().lower(),
+        ]
+    )
+
+
+def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
+    wastage_map = wastage_map or {}
     conn = get_conn()
     try:
         cur = conn.cursor(dictionary=True)
@@ -773,26 +876,51 @@ def build_tender_estimate(project_code, ifc_file_name):
                 price = 0.0
 
             amount = qty * price
+            wastage_pct = float(
+                wastage_map.get(_wastage_map_key(code, material_name, material_description), 0.0) or 0.0
+            )
+            wastage_volume = qty * (wastage_pct / 100.0)
+            wastage_amt = wastage_volume * price
+            total_amt = amount + wastage_amt
             key = (code, item, unit, price)
             if key not in grouped:
-                grouped[key] = {"qty": 0.0, "amount": 0.0}
+                grouped[key] = {
+                    "qty": 0.0,
+                    "amount": 0.0,
+                    "wastage_pct_weighted_sum": 0.0,
+                    "wastage_volume": 0.0,
+                    "wastage_amt": 0.0,
+                    "total_amt": 0.0,
+                }
             grouped[key]["qty"] += qty
             grouped[key]["amount"] += amount
+            grouped[key]["wastage_pct_weighted_sum"] += wastage_pct * qty
+            grouped[key]["wastage_volume"] += wastage_volume
+            grouped[key]["wastage_amt"] += wastage_amt
+            grouped[key]["total_amt"] += total_amt
 
         rows = []
         grand_total = 0.0
         for (code, item, unit, price), vals in grouped.items():
             qty = vals["qty"]
             amount = vals["amount"]
-            grand_total += amount
+            wastage_pct_display = (vals["wastage_pct_weighted_sum"] / qty) if qty > 0 else 0.0
+            wastage_volume = vals["wastage_volume"]
+            wastage_amt = vals["wastage_amt"]
+            total_amt = vals["total_amt"]
+            grand_total += total_amt
             rows.append(
                 {
                     "Work Item Code": code,
                     "Item": item,
-                    "Area / Volume (m³)": f"{qty:,.3f}",
+                    "Area / Volume (m\u00B3)": f"{qty:,.3f}",
                     "Unit": unit,
-                    "Price (₹)": f"{price:,.2f}",
-                    "Amount (₹)": f"{amount:,.2f}",
+                    "Price (\u20B9)": f"{price:,.2f}",
+                    "Amount (\u20B9)": f"{amount:,.2f}",
+                    "Wastage (%)": f"{wastage_pct_display:,.2f}",
+                    "Wastage Volume (m\u00B3)": f"{wastage_volume:,.3f}",
+                    "Wastage Amt (\u20B9)": f"{wastage_amt:,.2f}",
+                    "Total Amt (\u20B9)": f"{total_amt:,.2f}",
                 }
             )
 
@@ -804,17 +932,28 @@ def build_tender_estimate(project_code, ifc_file_name):
 def build_tender_estimate_csv_bytes(rows, grand_total):
     output = io.StringIO()
     writer = csv.writer(output)
-    headers = ["Work Item Code", "Item", "Area / Volume (m³)", "Unit", "Price (₹)", "Amount (₹)"]
+    headers = [
+        "Work Item Code",
+        "Item",
+        "Area / Volume (m\u00B3)",
+        "Unit",
+        "Price (\u20B9)",
+        "Amount (\u20B9)",
+        "Wastage (%)",
+        "Wastage Volume (m\u00B3)",
+        "Wastage Amt (\u20B9)",
+        "Total Amt (\u20B9)",
+    ]
     writer.writerow(headers)
     for row in rows:
         writer.writerow([row.get(h, "") for h in headers])
     writer.writerow([])
-    writer.writerow(["", "", "", "", "Grand Total", f"₹ {grand_total:,.2f}"])
-    # Excel on Windows often mis-detects UTF-8 CSV without BOM (shows ₹ as â‚¹).
+    writer.writerow(["", "", "", "", "", "", "", "", "Grand Total", f"\u20B9 {grand_total:,.2f}"])
+    # Keep ASCII labels for maximum compatibility across Excel/encodings.
     return output.getvalue().encode("utf-8-sig")
 
 
-def render_simple_table(rows):
+def render_simple_table(rows, wide=False):
     if not rows:
         return
     headers = list(rows[0].keys())
@@ -826,14 +965,21 @@ def render_simple_table(rows):
             for h in headers
         )
         body_parts.append(f"<tr>{tds}</tr>")
+    table_layout = "fixed"
+    wrap_overflow = "visible"
+    table_font = "12px" if wide else "15px"
+    td_whitespace = "normal"
+
     table_html = f"""
     <style>
       .formal-table-wrap {{
-        overflow-x: auto;
+        overflow-x: {wrap_overflow};
         margin-bottom: 1rem;
       }}
       .formal-table {{
         width: 100%;
+        table-layout: {table_layout};
+        min-width: 100%;
         border-collapse: separate;
         border-spacing: 0;
         border: 1px solid #c9c9c9;
@@ -841,7 +987,7 @@ def render_simple_table(rows):
         overflow: hidden;
         background: #ffffff;
         color: #111111;
-        font-size: 15px;
+        font-size: {table_font};
       }}
       .formal-table thead tr {{
         background: #ffffff;
@@ -859,6 +1005,8 @@ def render_simple_table(rows):
         color: #111111 !important;
         padding: 10px 12px;
         border-bottom: 1px solid #ececec;
+        white-space: {td_whitespace};
+        word-break: break-word;
       }}
       .formal-table tbody tr:nth-child(even) {{
         background: #fafafa;
@@ -879,6 +1027,160 @@ def render_simple_table(rows):
     </div>
     """
     st.markdown(table_html, unsafe_allow_html=True)
+
+
+def split_qto_tables(rows, wastage_map=None):
+    wastage_map = wastage_map or {}
+    first_rows = []
+    second_acc = {}
+    for r in rows or []:
+        area_val = r.get("Total Area (m²)", r.get("Total Area (mÂ²)", ""))
+        vol_val = r.get("Total Volume (m³)", r.get("Total Volume (mÂ³)", ""))
+        work_item_code = r.get("Work Item Code", "")
+        material_name = r.get("Material:Name", "")
+        material_description = r.get("Material:Description", "")
+        wastage_raw = wastage_map.get(
+            _wastage_map_key(work_item_code, material_name, material_description),
+            r.get("Wastage (%)", ""),
+        )
+        try:
+            wastage_val = None if wastage_raw in ("", None) else float(wastage_raw)
+        except Exception:
+            wastage_val = None
+
+        first_rows.append(
+            {
+                "Work Item Code": work_item_code,
+                "Family": r.get("Family", ""),
+                "Type": r.get("Type", ""),
+                "Material:Name": material_name,
+                "Total Volume (m³)": vol_val,
+                "Total Area (m²)": area_val,
+            }
+        )
+
+        # Table 2 should be work-item wise, not split by family/type lines.
+        if str(material_name).strip().lower().startswith("total for "):
+            continue
+        key = (work_item_code, material_name)
+        if key not in second_acc:
+            second_acc[key] = {
+                "Work Item Code": work_item_code,
+                "Material:Name": material_name,
+                "_descriptions": set(),
+                "Wastage (%)": wastage_val,
+                "_vol": 0.0,
+                "_area": 0.0,
+            }
+        if material_description:
+            second_acc[key]["_descriptions"].add(str(material_description).strip())
+
+        def _to_float(v):
+            try:
+                return float(str(v).replace(",", "").strip())
+            except Exception:
+                return 0.0
+
+        second_acc[key]["_vol"] += _to_float(vol_val)
+        second_acc[key]["_area"] += _to_float(area_val)
+
+    second_rows = []
+    for _, row in second_acc.items():
+        second_rows.append(
+            {
+                "Work Item Code": row["Work Item Code"],
+                "Material:Name": row["Material:Name"],
+                "Material:Description": "; ".join(sorted(row["_descriptions"])),
+                "Wastage (%)": row["Wastage (%)"],
+                "Total Volume (m³)": f"{row['_vol']:,.3f}",
+                "Total Area (m²)": f"{row['_area']:,.3f}",
+            }
+        )
+    return first_rows, second_rows
+
+
+def render_qto_table1_inputs(rows, key_prefix):
+    if not rows:
+        return []
+
+    sample = rows[0]
+    vol_key = "Total Volume (m³)" if "Total Volume (m³)" in sample else "Total Volume (mÂ³)"
+    area_key = "Total Area (m²)" if "Total Area (m²)" in sample else "Total Area (mÂ²)"
+
+    h = st.columns([1.2, 1.0, 1.1, 1.6, 1.1, 1.1])
+    h[0].markdown("**Work Item Code**")
+    h[1].markdown("**Family**")
+    h[2].markdown("**Type**")
+    h[3].markdown("**Material:Name**")
+    h[4].markdown("**Total Volume (m³)**")
+    h[5].markdown("**Total Area (m²)**")
+    st.divider()
+
+    for _, row in enumerate(rows):
+        c = st.columns([1.2, 1.0, 1.1, 1.6, 1.1, 1.1])
+        c[0].write(row.get("Work Item Code", ""))
+        c[1].write(row.get("Family", ""))
+        c[2].write(row.get("Type", ""))
+        c[3].write(row.get("Material:Name", ""))
+        c[4].write(row.get(vol_key, ""))
+        c[5].write(row.get(area_key, ""))
+        st.divider()
+
+    return rows
+
+
+def render_qto_table2_inputs(rows, key_prefix):
+    if not rows:
+        return []
+
+    sample = rows[0]
+    vol_key = "Total Volume (m³)" if "Total Volume (m³)" in sample else "Total Volume (mÂ³)"
+    area_key = "Total Area (m²)" if "Total Area (m²)" in sample else "Total Area (mÂ²)"
+
+    h = st.columns([1.1, 1.6, 2.2, 0.9, 1.1, 1.1])
+    h[0].markdown("**Work Item Code**")
+    h[1].markdown("**Material:Name**")
+    h[2].markdown("**Material:Description**")
+    h[3].markdown("**Wastage (%)**")
+    h[4].markdown("**Total Volume (m³)**")
+    h[5].markdown("**Total Area (m²)**")
+    st.divider()
+
+    updated = []
+    for idx, row in enumerate(rows):
+        c = st.columns([1.1, 1.6, 2.2, 0.9, 1.1, 1.1])
+        c[0].write(row.get("Work Item Code", ""))
+        c[1].write(row.get("Material:Name", ""))
+        c[2].write(row.get("Material:Description", ""))
+
+        is_total_row = str(row.get("Material:Name", "")).strip().lower().startswith("total for ")
+        if is_total_row:
+            c[3].write("")
+            wastage = ""
+        else:
+            try:
+                default_wastage = float(row.get("Wastage (%)") or 0.0)
+            except Exception:
+                default_wastage = 0.0
+            wastage = c[3].number_input(
+                "Wastage (%)",
+                min_value=0.0,
+                step=0.01,
+                format="%.2f",
+                value=default_wastage,
+                key=f"{key_prefix}_wastage_{idx}",
+                label_visibility="collapsed",
+            )
+
+        c[4].write(row.get(vol_key, ""))
+        c[5].write(row.get(area_key, ""))
+        st.divider()
+
+        new_row = dict(row)
+        new_row["Wastage (%)"] = "" if wastage == "" else f"{float(wastage):.2f}"
+        updated.append(new_row)
+
+    return updated
 
 
 def fetch_table_rows(project_code, ifc_file_name, table_name, columns):
@@ -1020,11 +1322,16 @@ def build_final_report_bytes(project_code, ifc_file_name):
 # -----------------------------
 # UI
 # -----------------------------
-st.set_page_config(page_title="Tender Estimation Model", layout="centered")
+st.set_page_config(page_title="Tender Estimation Model", layout="wide")
 
 st.markdown(
     """
     <style>
+    .stApp .main .block-container {
+        max-width: 100%;
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
     .main-title {
         font-size: 48px;
         font-weight: 800;
@@ -1063,6 +1370,8 @@ if "result_project_code" not in st.session_state:
     st.session_state.result_project_code = None
 if "result_ifc_file_name" not in st.session_state:
     st.session_state.result_ifc_file_name = None
+if "qto_wastage_map" not in st.session_state:
+    st.session_state.qto_wastage_map = {}
 
 # Load SOR codes from sor_data
 try:
@@ -1221,11 +1530,11 @@ elif st.session_state.step == 2:
             )
             updated_rows.append({"id": row["id"], "charge_name": charge_label, "percentage": val})
 
-        c_prev, c_next = st.columns(2)
+        c_prev, c_spacer, c_next = st.columns([1.4, 5.2, 1.4])
         with c_prev:
             prev_clicked = st.form_submit_button("Previous")
         with c_next:
-            next_clicked = st.form_submit_button("Next", type="primary")
+            next_clicked = st.form_submit_button("Next", type="primary", use_container_width=True)
 
     if prev_clicked:
         st.session_state.draft_charges = updated_rows
@@ -1250,6 +1559,7 @@ elif st.session_state.step == 2:
             )
             st.session_state.result_project_code = project_code
             st.session_state.result_ifc_file_name = ifc_file_name
+            st.session_state.qto_wastage_map = {}
             st.session_state.step = 3
             st.rerun()
         except Exception as e:
@@ -1274,23 +1584,53 @@ elif st.session_state.step == 3:
         st.error(f"Failed to load QTO report: {e}")
         st.stop()
 
+    wastage_map = st.session_state.get("qto_wastage_map", {})
+    masonry_t2 = []
+    plaster_t2 = []
+    rcc_t2 = []
+
     st.subheader("D - Masonry Work")
     if masonry_rows:
-        render_simple_table(masonry_rows)
+        masonry_t1, masonry_t2 = split_qto_tables(masonry_rows, wastage_map=wastage_map)
+        st.markdown("##### Family Type Table")
+        render_qto_table1_inputs(masonry_t1, "qto_masonry_table1")
+        st.markdown("##### Work Item Table")
+        masonry_t2 = render_qto_table2_inputs(masonry_t2, "qto_masonry_table2")
     else:
         st.info("No masonry records found for this project.")
 
     st.subheader("F - Plastering Work")
     if plastering_rows:
-        render_simple_table(plastering_rows)
+        plaster_t1, plaster_t2 = split_qto_tables(plastering_rows, wastage_map=wastage_map)
+        st.markdown("##### Family Type Table")
+        render_qto_table1_inputs(plaster_t1, "qto_plaster_table1")
+        st.markdown("##### Work Item Table")
+        plaster_t2 = render_qto_table2_inputs(plaster_t2, "qto_plaster_table2")
     else:
         st.info("No plastering records found for this project.")
 
     st.subheader("C - RCC Work")
     if rcc_rows:
-        render_simple_table(rcc_rows)
+        rcc_t1, rcc_t2 = split_qto_tables(rcc_rows, wastage_map=wastage_map)
+        st.markdown("##### Family Type Table")
+        render_qto_table1_inputs(rcc_t1, "qto_rcc_table1")
+        st.markdown("##### Work Item Table")
+        rcc_t2 = render_qto_table2_inputs(rcc_t2, "qto_rcc_table2")
     else:
         st.info("No RCC records found for this project.")
+
+    updated_wastage_map = {}
+    for row in masonry_t2 + plaster_t2 + rcc_t2:
+        material_name = str(row.get("Material:Name", "")).strip()
+        if material_name.lower().startswith("total for "):
+            continue
+        try:
+            pct = float(row.get("Wastage (%)") or 0.0)
+        except Exception:
+            pct = 0.0
+        key = _wastage_map_key(row.get("Work Item Code", ""), material_name, row.get("Material:Description", ""))
+        updated_wastage_map[key] = pct
+    st.session_state.qto_wastage_map = updated_wastage_map
 
     st.markdown("---")
     try:
@@ -1304,13 +1644,13 @@ elif st.session_state.step == 3:
     except Exception as e:
         st.error(f"Failed to build export report: {e}")
 
-    c_prev, c_next = st.columns(2)
+    c_prev, c_spacer, c_next = st.columns([1.4, 5.2, 1.4])
     with c_prev:
         if st.button("Previous"):
             st.session_state.step = 2
             st.rerun()
     with c_next:
-        if st.button("Next", type="primary"):
+        if st.button("Next", type="primary", use_container_width=True):
             st.session_state.step = 4
             st.rerun()
 
@@ -1326,7 +1666,11 @@ elif st.session_state.step == 4:
 
     st.markdown('<div class="section-title">Tender Estimate</div>', unsafe_allow_html=True)
     try:
-        project, estimate_rows, grand_total = build_tender_estimate(project_code, ifc_file_name)
+        project, estimate_rows, grand_total = build_tender_estimate(
+            project_code,
+            ifc_file_name,
+            wastage_map=st.session_state.get("qto_wastage_map", {}),
+        )
     except Exception as e:
         st.error(f"Failed to build tender estimate: {e}")
         st.stop()
@@ -1348,8 +1692,8 @@ elif st.session_state.step == 4:
         st.write(f"**Date of Issue:** {project.get('date_of_issue','')}")
 
     if estimate_rows:
-        render_simple_table(estimate_rows)
-        st.markdown(f"### Grand Total: ₹ {grand_total:,.2f}")
+        render_simple_table(estimate_rows, wide=True)
+        st.markdown(f"### Grand Total: \u20B9 {grand_total:,.2f}")
         csv_bytes = build_tender_estimate_csv_bytes(estimate_rows, grand_total)
         st.download_button(
             "Export Rate Table (CSV)",
@@ -1374,4 +1718,8 @@ elif st.session_state.step == 4:
             st.session_state.draft_ifc_bytes = None
             st.session_state.result_project_code = None
             st.session_state.result_ifc_file_name = None
+            st.session_state.qto_wastage_map = {}
             st.rerun()
+
+
+

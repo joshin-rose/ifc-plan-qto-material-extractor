@@ -398,8 +398,8 @@ ExpressId,GlobalId,Family,Type,Level,Material:Name,Material:Description,Material
 66750,3shmjyHFfDyARvEOK$1bxg,RCC RECTANGULAR COLUMN,RCC COLUMN (230mm x 900mm),Terrace Floor,RCC - M30,Concrete f'c=30 MPa,0.2069999999999887
 66811,3shmjyHFfDyARvEOK$1bxh,RCC RECTANGULAR COLUMN,RCC COLUMN (230mm x 900mm),Terrace Floor,RCC - M30,Concrete f'c=30 MPa,0.20699999999998892
 66872,3shmjyHFfDyARvEOK$1bxq,RCC RECTANGULAR COLUMN,RCC COLUMN (230mm x 900mm),Terrace Floor,RCC - M30,Concrete f'c=30 MPa,0.20699999999998892
-82454,3D3GaeOoTDaxoPsmDdzWM_,Floor,RCC SLAB 200mm,Ground Floor,RCC - M30,Concrete f'c=30 MPa,587.750739999998
-82568,3D3GaeOoTDaxoPsmDdzlk3,Floor,RCC SLAB 200mm,First Floor,RCC - M30,Concrete f'c=30 MPa,480.3049622222236
-83105,3D3GaeOoTDaxoPsmDdzl6K,Floor,RCC SLAB 200mm,Terrace Floor,RCC - M30,Concrete f'c=30 MPa,480.3049622222242
-83647,3D3GaeOoTDaxoPsmDdzlBq,Floor,RCC SLAB 200mm,Parapet Level,RCC - M30,Concrete f'c=30 MPa,3.576039999999527
-91042,3daK3azsD2fgx5A$bU$$9x,Floor,RCC SLAB 200mm,Parapet Level,RCC - M30,Concrete f'c=30 MPa,3.5760399999995274
+82454,3D3GaeOoTDaxoPsmDdzWM_,Floor,RCC SLAB 200mm,Ground Floor,RCC - M30,"Concrete Floor, 200mm thick, Interior Function",587.750739999998
+82568,3D3GaeOoTDaxoPsmDdzlk3,Floor,RCC SLAB 200mm,First Floor,RCC - M30,"Concrete Floor, 200mm thick, Interior Function",480.3049622222236
+83105,3D3GaeOoTDaxoPsmDdzl6K,Floor,RCC SLAB 200mm,Terrace Floor,RCC - M30,"Concrete Floor, 200mm thick, Interior Function",480.3049622222242
+83647,3D3GaeOoTDaxoPsmDdzlBq,Floor,RCC SLAB 200mm,Parapet Level,RCC - M30,"Concrete Floor, 200mm thick, Interior Function",3.576039999999527
+91042,3daK3azsD2fgx5A$bU$$9x,Floor,RCC SLAB 200mm,Parapet Level,RCC - M30,"Concrete Floor, 200mm thick, Interior Function",3.5760399999995274
