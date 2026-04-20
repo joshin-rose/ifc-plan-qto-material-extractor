@@ -219,6 +219,33 @@ def save_wastage_defaults(sor_code, wastage_map):
         conn.close()
 
 
+def get_subpackage_name_map(sor_code, work_item_codes):
+    codes = [str(c or "").strip() for c in (work_item_codes or []) if str(c or "").strip()]
+    if not sor_code or not codes:
+        return {}
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor(dictionary=True)
+        placeholders = ", ".join(["%s"] * len(codes))
+        cur.execute(
+            f"""
+            SELECT subpackage_code, subpackage_name
+            FROM work_item_subpackage
+            WHERE sor_code = %s
+              AND subpackage_code IN ({placeholders})
+            """,
+            (sor_code, *codes),
+        )
+        rows = cur.fetchall()
+        return {
+            str(r.get("subpackage_code") or "").strip(): str(r.get("subpackage_name") or "").strip()
+            for r in rows
+        }
+    finally:
+        conn.close()
+
+
 def submit_all(project_payload, file_bytes, original_file_name, charges):
     original_name = safe_filename(original_file_name)
     unique_prefix = uuid.uuid4().hex[:8]
@@ -1398,7 +1425,7 @@ def render_qto_table2_inputs(rows, key_prefix):
     return rows
 
 
-def build_qto_merged_rows(rows, wastage_map=None):
+def build_qto_merged_rows(rows, wastage_map=None, include_area=True):
     wastage_map = wastage_map or {}
     grouped = {}
 
@@ -1416,28 +1443,28 @@ def build_qto_merged_rows(rows, wastage_map=None):
         material_name = str(r.get("Material:Name", "")).strip()
         material_desc = str(r.get("Material:Description", "")).strip()
         base_vol = _to_float(r.get("Total Volume (m³)", r.get("Total Volume (mÂ³)", 0)))
-        area = _to_float(r.get("Total Area (m²)", r.get("Total Area (mÂ²)", 0)))
+        area = _to_float(r.get("Total Area (m²)", r.get("Total Area (mÂ²)", 0))) if include_area else 0.0
         wastage_pct = _get_wastage_pct(wastage_map, code, default_pct=0.0)
         wastage_vol = base_vol * (wastage_pct / 100.0)
         total_vol = base_vol + wastage_vol
-        normalized.append(
-            {
-                "Work Item Code": code,
-                "Family": family,
-                "Type": type_name,
-                "Material:Name": material_name,
-                "Material:Description": material_desc,
-                "Wastage (%)": _format_indian_number(wastage_pct, 2),
-                "Base Volume (m³)": _format_indian_number(base_vol, 3),
-                "Wastage Volume (m³)": _format_indian_number(wastage_vol, 3),
-                "Total Volume (m³)": _format_indian_number(total_vol, 3),
-                "Total Area (m²)": _format_indian_number(area, 3),
-                "_base_vol": base_vol,
-                "_wastage_vol": wastage_vol,
-                "_total_vol": total_vol,
-                "_area": area,
-            }
-        )
+        row_obj = {
+            "Work Item Code": code,
+            "Family": family,
+            "Type": type_name,
+            "Material:Name": material_name,
+            "Material:Description": material_desc,
+            "Wastage (%)": _format_indian_number(wastage_pct, 2),
+            "Base Volume (m³)": _format_indian_number(base_vol, 3),
+            "Wastage Volume (m³)": _format_indian_number(wastage_vol, 3),
+            "Total Volume (m³)": _format_indian_number(total_vol, 3),
+            "_base_vol": base_vol,
+            "_wastage_vol": wastage_vol,
+            "_total_vol": total_vol,
+            "_area": area,
+        }
+        if include_area:
+            row_obj["Total Area (m²)"] = _format_indian_number(area, 3)
+        normalized.append(row_obj)
 
     normalized.sort(
         key=lambda x: (
@@ -1479,9 +1506,10 @@ def build_qto_merged_rows(rows, wastage_map=None):
                     "Base Volume (m³)": _format_indian_number(sums["base"], 3),
                     "Wastage Volume (m³)": _format_indian_number(sums["wastage"], 3),
                     "Total Volume (m³)": _format_indian_number(sums["total"], 3),
-                    "Total Area (m²)": _format_indian_number(sums["area"], 3),
                 }
             )
+            if include_area:
+                final_rows[-1]["Total Area (m²)"] = _format_indian_number(sums["area"], 3)
             current_code = code
         final_rows.append(row)
 
@@ -1498,14 +1526,15 @@ def build_qto_merged_rows(rows, wastage_map=None):
                 "Base Volume (m³)": _format_indian_number(sums["base"], 3),
                 "Wastage Volume (m³)": _format_indian_number(sums["wastage"], 3),
                 "Total Volume (m³)": _format_indian_number(sums["total"], 3),
-                "Total Area (m²)": _format_indian_number(sums["area"], 3),
             }
         )
+        if include_area:
+            final_rows[-1]["Total Area (m²)"] = _format_indian_number(sums["area"], 3)
 
     return final_rows
 
 
-def render_qto_merged_table(rows, key_prefix):
+def render_qto_merged_table(rows, key_prefix, include_area=True):
     if not rows:
         return []
     headers = [
@@ -1518,8 +1547,9 @@ def render_qto_merged_table(rows, key_prefix):
         "Base Volume (m³)",
         "Wastage Volume (m³)",
         "Total Volume (m³)",
-        "Total Area (m²)",
     ]
+    if include_area:
+        headers.append("Total Area (m²)")
 
     head_html = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
     body_parts = []
@@ -1651,7 +1681,44 @@ def fetch_table_rows(project_code, ifc_file_name, table_name, columns):
         conn.close()
 
 
-def build_final_report_bytes(project_code, ifc_file_name):
+def _rows_to_sheet_rows(rows, headers):
+    out = [headers]
+    for r in rows or []:
+        out.append(["" if r.get(h) is None else str(r.get(h)) for h in headers])
+    return out
+
+
+def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
+    wastage_map = wastage_map or {}
+    masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
+    masonry_merged = build_qto_merged_rows(masonry_rows, wastage_map=wastage_map, include_area=True)
+    plaster_merged = build_qto_merged_rows(plastering_rows, wastage_map=wastage_map, include_area=True)
+    rcc_merged = build_qto_merged_rows(rcc_rows, wastage_map=wastage_map, include_area=False)
+
+    qto_headers_with_area = [
+        "Work Item Code",
+        "Family",
+        "Type",
+        "Material:Name",
+        "Material:Description",
+        "Wastage (%)",
+        "Base Volume (m³)",
+        "Wastage Volume (m³)",
+        "Total Volume (m³)",
+        "Total Area (m²)",
+    ]
+    qto_headers_no_area = [
+        "Work Item Code",
+        "Family",
+        "Type",
+        "Material:Name",
+        "Material:Description",
+        "Wastage (%)",
+        "Base Volume (m³)",
+        "Wastage Volume (m³)",
+        "Total Volume (m³)",
+    ]
+
     sheets = [
         (
             "Masonry_Takeoff",
@@ -1676,17 +1743,7 @@ def build_final_report_bytes(project_code, ifc_file_name):
         ),
         (
             "Masonry_Summary",
-            fetch_table_rows(
-                project_code,
-                ifc_file_name,
-                "masonry_summary",
-                [
-                    "material_name",
-                    "material_description",
-                    "total_material_area",
-                    "total_material_volume",
-                ],
-            ),
+            _rows_to_sheet_rows(masonry_merged, qto_headers_with_area),
         ),
         (
             "Plastering_Takeoff",
@@ -1711,17 +1768,7 @@ def build_final_report_bytes(project_code, ifc_file_name):
         ),
         (
             "Plastering_Summary",
-            fetch_table_rows(
-                project_code,
-                ifc_file_name,
-                "plastering_summary",
-                [
-                    "material_name",
-                    "material_description",
-                    "total_material_area",
-                    "total_material_volume",
-                ],
-            ),
+            _rows_to_sheet_rows(plaster_merged, qto_headers_with_area),
         ),
         (
             "RCC_Takeoff",
@@ -1743,16 +1790,7 @@ def build_final_report_bytes(project_code, ifc_file_name):
         ),
         (
             "RCC_Summary",
-            fetch_table_rows(
-                project_code,
-                ifc_file_name,
-                "rcc_summary",
-                [
-                    "material_name",
-                    "material_description",
-                    "total_material_volume",
-                ],
-            ),
+            _rows_to_sheet_rows(rcc_merged, qto_headers_no_area),
         ),
     ]
 
@@ -2066,6 +2104,11 @@ elif st.session_state.step == 3:
     except Exception as e:
         st.error(f"Failed to load default wastage values: {e}")
         st.stop()
+    try:
+        subpackage_name_map = get_subpackage_name_map(sor_code, work_item_codes)
+    except Exception as e:
+        st.error(f"Failed to load subpackage names: {e}")
+        st.stop()
 
     current_map = st.session_state.get("qto_wastage_map", {})
     initial_map = dict(db_default_map)
@@ -2074,8 +2117,10 @@ elif st.session_state.step == 3:
         updated_map = {}
         for code in work_item_codes:
             default_pct = _get_wastage_pct(initial_map, code, default_pct=float(db_default_map.get(code, 0.0)))
+            subpackage_name = subpackage_name_map.get(code, "").strip()
+            label = f"{code} - {subpackage_name} - Wastage (%)" if subpackage_name else f"{code} - Wastage (%)"
             pct = st.number_input(
-                f"{code} - Wastage (%)",
+                label,
                 min_value=0.0,
                 step=0.01,
                 format="%.2f",
@@ -2126,28 +2171,28 @@ elif st.session_state.step == 4:
 
     st.subheader("D - Masonry Work")
     if masonry_rows:
-        masonry_merged = build_qto_merged_rows(masonry_rows, wastage_map=wastage_map)
-        render_qto_merged_table(masonry_merged, "qto_masonry_merged")
+        masonry_merged = build_qto_merged_rows(masonry_rows, wastage_map=wastage_map, include_area=True)
+        render_qto_merged_table(masonry_merged, "qto_masonry_merged", include_area=True)
     else:
         st.info("No masonry records found for this project.")
 
     st.subheader("F - Plastering Work")
     if plastering_rows:
-        plaster_merged = build_qto_merged_rows(plastering_rows, wastage_map=wastage_map)
-        render_qto_merged_table(plaster_merged, "qto_plaster_merged")
+        plaster_merged = build_qto_merged_rows(plastering_rows, wastage_map=wastage_map, include_area=True)
+        render_qto_merged_table(plaster_merged, "qto_plaster_merged", include_area=True)
     else:
         st.info("No plastering records found for this project.")
 
     st.subheader("C - RCC Work")
     if rcc_rows:
-        rcc_merged = build_qto_merged_rows(rcc_rows, wastage_map=wastage_map)
-        render_qto_merged_table(rcc_merged, "qto_rcc_merged")
+        rcc_merged = build_qto_merged_rows(rcc_rows, wastage_map=wastage_map, include_area=False)
+        render_qto_merged_table(rcc_merged, "qto_rcc_merged", include_area=False)
     else:
         st.info("No RCC records found for this project.")
 
     st.markdown("---")
     try:
-        report_bytes = build_final_report_bytes(project_code, ifc_file_name)
+        report_bytes = build_final_report_bytes(project_code, ifc_file_name, wastage_map=wastage_map)
         _exp_spacer, _exp_btn_col = st.columns([6.6, 1.4])
         with _exp_btn_col:
             st.download_button(
