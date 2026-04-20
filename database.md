@@ -1270,3 +1270,711 @@ CREATE TABLE IF NOT EXISTS rcc_summary (
       REFERENCES project_master(project_code, ifc_file_name)
       ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+
+# Database Updates starts from here 
+
+
+DELETE FROM work_item_rate
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'G3');
+
+DELETE FROM work_item_analysis
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'G3');
+
+DELETE FROM work_item_subpackage
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('D5', 'D6', 'D7', 'D8', 'D9', 'D10', 'G3');
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Burnt Brick (230mm X 115mm X 75mm)',
+  description = 'Masonry Burnt Brick (230mm X 115mm X 75mm) with 1:6 CM mortar'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'D1';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Flyash Block (230mm X 110mm X 70mm)',
+  description = 'Masonry Flyash Block (230mm X 110mm X 70mm) with 1:6 CM mortar'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'D2';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Wire cut Bricks (230mm X 115mm X 75mm)',
+  description = 'Masonry Wire cut Brick (230mm X 115mm X 75mm) with 1:6 CM mortar'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'D3';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Burnt Clay Hollow Brick  (400mm X 200mm X 200mm)',
+  description = 'Masonry Burnt Clay Hollow Brick  (400mm X 200mm X 200mm) with 1:6 CM mortar'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'D4';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Granite',
+  description = 'Granite Laying with 20 mm mortar bed, 1:4 CM'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'F1';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Marble',
+  description = 'Marble Laying with 20 mm mortar bed, 1:4 CM'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'F2';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Tile',
+  description = 'Tile Laying with 20 mm mortar bed, 1:4 CM'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'F3';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'Internal Wall Painting',
+  description = 'Painting of Interior Wall for 2 Coats'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'G1';
+
+UPDATE work_item_subpackage
+SET
+  subpackage_name = 'External Wall Painting',
+  description = 'Painting of Exterior Wall for 2 Coats'
+WHERE sor_code = 'TN_SOR_2025' AND subpackage_code = 'G2';
+
+INSERT INTO sor_material_category (sor_code, category_code, category_name)
+VALUES
+('TN_SOR_2025', 'H', 'Vitified Tile'),
+('TN_SOR_2025', 'I', 'Marble'),
+('TN_SOR_2025', 'J', 'Painting');
+
+INSERT INTO sor_material_data
+(sor_code, category_code, subcategory_name, unique_code, description, unit, unit_multiplier, base_rate)
+VALUES
+('TN_SOR_2025', 'H', NULL, 'M-3101', 'Vitified Tile (300mm x 300mm)', 'sqm', 1, 300.00),
+('TN_SOR_2025', 'H', NULL, 'M-3002', 'Vitified Tile (600mm x 600mm)', 'sqm', 1, 600.00),
+('TN_SOR_2025', 'H', NULL, 'M-3003', 'Vitified Tile (1200mm x 600mm)', 'sqm', 1, 1200.00);
+
+INSERT INTO sor_material_data
+(sor_code, category_code, subcategory_name, unique_code, description, unit, unit_multiplier, base_rate)
+VALUES
+('TN_SOR_2025', 'I', NULL, 'M-3201', 'Marble - White Marble', 'sqm', 1, 1750.00);
+
+INSERT INTO sor_material_data
+(sor_code, category_code, subcategory_name, unique_code, description, unit, unit_multiplier, base_rate)
+VALUES
+('TN_SOR_2025', 'J', NULL, 'M-3301', 'Wall Putty - White cement based putty', 'Kg', 1, 35.00),
+('TN_SOR_2025', 'J', NULL, 'M-3302', 'Wall Putty - White cement based putty (Exterior Grade)', 'Kg', 1, 40.00),
+('TN_SOR_2025', 'J', NULL, 'M-3303', 'Wall Primer - Interior', 'Litre', 1, 180.00),
+('TN_SOR_2025', 'J', NULL, 'M-3304', 'Wall Primer - Exterior', 'Litre', 1, 200.00),
+('TN_SOR_2025', 'J', NULL, 'M-3305', 'Interior Emulsion Paint', 'Litre', 1, 300.00),
+('TN_SOR_2025', 'J', NULL, 'M-3306', 'Exterior Emulsion Paint - Weather proof exterior paint', 'Litre', 1, 350.00);
+
+INSERT INTO sor_equipment_data (sor_code, unique_code, description, unit, base_rate)
+VALUES
+('TN_SOR_2025', 'H-0122', 'Hire charges for Granite Flooring Tools and Tackles', 'Day', 750.00),
+('TN_SOR_2025', 'H-0123', 'Hire charges for Marble Flooring Tools and Tackles', 'Day', 1000.00),
+('TN_SOR_2025', 'H-0124', 'Hire charges for Tiles Flooring Tools and Tackles', 'Day', 400.00),
+('TN_SOR_2025', 'H-0125', 'Hire charges for Painting Tools and Tackles', 'Day', 500.00),
+('TN_SOR_2025', 'H-0126', 'Hire charges for Painting Scaffolding', 'Day', 750.00);
+
+INSERT INTO lead_lift_item_master (sor_code, ll_code, item_name, profile_code, distance_km)
+VALUES
+('TN_SOR_2025', 'LL6',  'Flyash Block (230mm X 110mm X 70mm)',             'TP6', 15.00),
+('TN_SOR_2025', 'LL7',  'Wire cut Bricks (230mm X 115mm X 75mm)',          'TP6', 20.00),
+('TN_SOR_2025', 'LL8',  'Burnt Clay Hollow Brick (400mm X 200mm X 200mm)', 'TP6', 30.00),
+('TN_SOR_2025', 'LL9',  'Granite',                                          'TP3', 15.00),
+('TN_SOR_2025', 'LL10', 'Marble',                                           'TP3', 15.00),
+('TN_SOR_2025', 'LL11', 'Tiles',                                            'TP3', 15.00);
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 100, analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code = 'A1';
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 10, analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('B1','B2','B3','B4','B5');
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 10, analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('C1','C2','C3');
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 10, analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('D1','D2','D3','D4');
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 100, analysis_unit = 'Cu.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('E1','E2','E3','E4','E5');
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 10, analysis_unit = 'Sq.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('F1','F2','F3');
+
+UPDATE work_item_subpackage
+SET analysis_quantity = 10, analysis_unit = 'Sq.M'
+WHERE sor_code = 'TN_SOR_2025'
+  AND subpackage_code IN ('G1','G2');
+
+TRUNCATE TABLE work_item_analysis;
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+('TN_SOR_2025','A1','LABOUR','Earthworker',NULL,'L-0096',NULL,NULL,2.000,NULL),
+('TN_SOR_2025','A1','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','A1','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,10.000,NULL),
+
+('TN_SOR_2025','A1','EQUIPMENT','Excavator',NULL,NULL,'H-0111',NULL,8.000,NULL),
+('TN_SOR_2025','A1','EQUIPMENT','Loader',NULL,NULL,'H-0115',NULL,8.000,NULL),
+('TN_SOR_2025','A1','EQUIPMENT','Tipper',NULL,NULL,'H-0114',NULL,8.000,NULL),
+('TN_SOR_2025','A1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0116',NULL,1.000,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','B1','MATERIAL','Coarse Aggregate','M-0086',NULL,NULL,NULL,9.500,NULL),
+('TN_SOR_2025','B1','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.750,NULL),
+('TN_SOR_2025','B1','MATERIAL','Cement (28.5 bags or 0.95 Cu.M)','M-0001',NULL,NULL,NULL,1.368,NULL),
+
+-- LABOUR
+('TN_SOR_2025','B1','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,0.500,NULL),
+('TN_SOR_2025','B1','LABOUR','Mason',NULL,'L-0029',NULL,NULL,1.500,NULL),
+('TN_SOR_2025','B1','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','B1','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','B1','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,1.000,NULL),
+('TN_SOR_2025','B1','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,NULL),
+('TN_SOR_2025','B1','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','B1','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',9.500,NULL),
+('TN_SOR_2025','B1','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.750,NULL),
+('TN_SOR_2025','B1','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',1.368,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','B2','MATERIAL','Coarse Aggregate','M-0086',NULL,NULL,NULL,9.200,NULL),
+('TN_SOR_2025','B2','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.600,NULL),
+('TN_SOR_2025','B2','MATERIAL','Cement (34.5 bags or 1.15 Cu.M)','M-0001',NULL,NULL,NULL,1.656,NULL),
+
+-- LABOUR
+('TN_SOR_2025','B2','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,0.500,NULL),
+('TN_SOR_2025','B2','LABOUR','Mason',NULL,'L-0029',NULL,NULL,1.500,NULL),
+('TN_SOR_2025','B2','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','B2','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','B2','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,1.000,NULL),
+('TN_SOR_2025','B2','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,NULL),
+('TN_SOR_2025','B2','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','B2','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',9.200,NULL),
+('TN_SOR_2025','B2','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.600,NULL),
+('TN_SOR_2025','B2','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',1.656,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','B3','MATERIAL','Coarse Aggregate','M-0086',NULL,NULL,NULL,9.000,NULL),
+('TN_SOR_2025','B3','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.500,NULL),
+('TN_SOR_2025','B3','MATERIAL','Cement (45 bags or 1.50 Cu.M)','M-0001',NULL,NULL,NULL,2.160,NULL),
+
+-- LABOUR
+('TN_SOR_2025','B3','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,0.500,NULL),
+('TN_SOR_2025','B3','LABOUR','Mason',NULL,'L-0029',NULL,NULL,1.500,NULL),
+('TN_SOR_2025','B3','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','B3','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','B3','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,1.000,NULL),
+('TN_SOR_2025','B3','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,NULL),
+('TN_SOR_2025','B3','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','B3','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',9.000,NULL),
+('TN_SOR_2025','B3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.500,NULL),
+('TN_SOR_2025','B3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',2.160,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','B4','MATERIAL','Coarse Aggregate','M-0088',NULL,NULL,NULL,8.800,NULL),
+('TN_SOR_2025','B4','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.400,NULL),
+('TN_SOR_2025','B4','MATERIAL','Cement (66 bags or 2.20 Cu.M)','M-0001',NULL,NULL,NULL,3.168,NULL),
+
+-- LABOUR
+('TN_SOR_2025','B4','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,0.500,NULL),
+('TN_SOR_2025','B4','LABOUR','Mason',NULL,'L-0029',NULL,NULL,1.500,NULL),
+('TN_SOR_2025','B4','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','B4','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','B4','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,1.000,NULL),
+('TN_SOR_2025','B4','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,NULL),
+('TN_SOR_2025','B4','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','B4','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',8.800,NULL),
+('TN_SOR_2025','B4','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.400,NULL),
+('TN_SOR_2025','B4','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',3.168,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','B5','MATERIAL','Coarse Aggregate','M-0088',NULL,NULL,NULL,8.400,NULL),
+('TN_SOR_2025','B5','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.200,NULL),
+('TN_SOR_2025','B5','MATERIAL','Cement (84 bags or 2.80 Cu.M)','M-0001',NULL,NULL,NULL,4.032,NULL),
+
+-- LABOUR
+('TN_SOR_2025','B5','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,0.500,NULL),
+('TN_SOR_2025','B5','LABOUR','Mason',NULL,'L-0029',NULL,NULL,1.500,NULL),
+('TN_SOR_2025','B5','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','B5','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','B5','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,1.000,NULL),
+('TN_SOR_2025','B5','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,NULL),
+('TN_SOR_2025','B5','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','B5','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',8.400,NULL),
+('TN_SOR_2025','B5','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.200,NULL),
+('TN_SOR_2025','B5','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',4.032,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','C1','MATERIAL','Coarse Aggregate','M-0088',NULL,NULL,NULL,8.400,NULL),
+('TN_SOR_2025','C1','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.200,NULL),
+('TN_SOR_2025','C1','MATERIAL','Cement (84 bags or 2.80 Cu.M)','M-0001',NULL,NULL,NULL,4.032,NULL),
+('TN_SOR_2025','C1','MATERIAL','Steel, Mild Steel bars @ 2% = 0.2 Cu.M','M-0002',NULL,NULL,NULL,1.570,'1 Cu.M of steel = 78.5 Quintals; 78.5Q x 0.2Cu.M = 15.7Q; 1Q = 0.1 MT'),
+('TN_SOR_2025','C1','MATERIAL','Binding Wire','M-0189',NULL,NULL,NULL,2.000,NULL),
+
+-- LABOUR
+('TN_SOR_2025','C1','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Mason',NULL,'L-0029',NULL,NULL,3.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Blacksmith (II class) for bar bending',NULL,'L-0060',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Mazdoor for bar bending',NULL,'L-0098',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Carpenter (II class) for centering & shuttering',NULL,'L-0063',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','C1','LABOUR','Mazdoor for centering & shuttering',NULL,'L-0098',NULL,NULL,10.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','C1','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,0.750,NULL),
+('TN_SOR_2025','C1','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C1','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C1','EQUIPMENT','Shuttering',NULL,NULL,'H-0120',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0121',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','C1','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',8.400,NULL),
+('TN_SOR_2025','C1','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.200,NULL),
+('TN_SOR_2025','C1','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',4.032,NULL),
+('TN_SOR_2025','C1','LEAD & LIFT','Steel',NULL,NULL,NULL,'LL2',1.570,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','C2','MATERIAL','Coarse Aggregate','M-0088',NULL,NULL,NULL,8.200,NULL),
+('TN_SOR_2025','C2','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.100,NULL),
+('TN_SOR_2025','C2','MATERIAL','Cement (90 bags or 3.125 Cu.M)','M-0001',NULL,NULL,NULL,4.500,NULL),
+('TN_SOR_2025','C2','MATERIAL','Steel, Mild Steel bars @ 2% = 0.2 Cu.M','M-0002',NULL,NULL,NULL,1.570,'1 Cu.M of steel = 78.5 Quintals; 78.5Q x 0.2Cu.M = 15.7Q; 1Q = 0.1 MT'),
+('TN_SOR_2025','C2','MATERIAL','Binding Wire','M-0189',NULL,NULL,NULL,2.000,NULL),
+
+-- LABOUR
+('TN_SOR_2025','C2','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Mason',NULL,'L-0029',NULL,NULL,3.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Blacksmith (II class) for bar bending',NULL,'L-0060',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Mazdoor for bar bending',NULL,'L-0098',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Carpenter (II class) for centering & shuttering',NULL,'L-0063',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','C2','LABOUR','Mazdoor for centering & shuttering',NULL,'L-0098',NULL,NULL,10.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','C2','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,0.750,NULL),
+('TN_SOR_2025','C2','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C2','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C2','EQUIPMENT','Shuttering',NULL,NULL,'H-0120',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C2','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0121',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','C2','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',8.200,NULL),
+('TN_SOR_2025','C2','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.100,NULL),
+('TN_SOR_2025','C2','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',4.500,NULL),
+('TN_SOR_2025','C2','LEAD & LIFT','Steel',NULL,NULL,NULL,'LL2',1.570,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','C3','MATERIAL','Coarse Aggregate','M-0088',NULL,NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C3','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C3','MATERIAL','Cement (96 bags or 3.33 Cu.M)','M-0001',NULL,NULL,NULL,4.800,NULL),
+('TN_SOR_2025','C3','MATERIAL','Steel, Mild Steel bars @ 2% = 0.2 Cu.M','M-0002',NULL,NULL,NULL,1.570,'1 Cu.M of steel = 78.5 Quintals; 78.5Q x 0.2Cu.M = 15.7Q; 1Q = 0.1 MT'),
+('TN_SOR_2025','C3','MATERIAL','Binding Wire','M-0189',NULL,NULL,NULL,2.000,NULL),
+
+-- LABOUR
+('TN_SOR_2025','C3','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Mason',NULL,'L-0029',NULL,NULL,3.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,4.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Blacksmith (II class) for bar bending',NULL,'L-0060',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Mazdoor for bar bending',NULL,'L-0098',NULL,NULL,8.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Carpenter (II class) for centering & shuttering',NULL,'L-0063',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','C3','LABOUR','Mazdoor for centering & shuttering',NULL,'L-0098',NULL,NULL,10.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','C3','EQUIPMENT','Concrete Mixer',NULL,NULL,'H-0110',NULL,0.750,NULL),
+('TN_SOR_2025','C3','EQUIPMENT','Vibrator',NULL,NULL,'H-0109',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C3','EQUIPMENT','Formwork',NULL,NULL,'H-0119',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C3','EQUIPMENT','Shuttering',NULL,NULL,'H-0120',NULL,1.000,'1 LS'),
+('TN_SOR_2025','C3','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0121',NULL,1.000,'1 LS'),
+
+-- LEAD & LIFT
+('TN_SOR_2025','C3','LEAD & LIFT','Course Aggregate',NULL,NULL,NULL,'LL3',8.000,NULL),
+('TN_SOR_2025','C3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',4.000,NULL),
+('TN_SOR_2025','C3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',4.800,NULL),
+('TN_SOR_2025','C3','LEAD & LIFT','Steel',NULL,NULL,NULL,'LL2',1.570,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','D1','MATERIAL','Brick (500 bricks per Cu.M)','M-0003',NULL,NULL,NULL,5000.000,NULL),
+('TN_SOR_2025','D1','MATERIAL','Cement (13.5 bags or 0.45 Cu.M)','M-0001',NULL,NULL,NULL,0.648,'Weight = Volume x Density = 0.45 x 1440'),
+('TN_SOR_2025','D1','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,2.700,NULL),
+
+-- LABOUR
+('TN_SOR_2025','D1','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','D1','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D1','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D1','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,7.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','D1','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','D1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','D1','LEAD & LIFT','Burnt Brick (230mm X 115mm X 75mm)',NULL,NULL,NULL,'LL5',5000.000,NULL),
+('TN_SOR_2025','D1','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.650,NULL),
+('TN_SOR_2025','D1','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.700,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','D2','MATERIAL','Flyash blocks (565 bricks per Cu.M)','M-0010',NULL,NULL,NULL,5650.000,NULL),
+('TN_SOR_2025','D2','MATERIAL','Cement (4.1 bags or 0.143 Cu.M)','M-0001',NULL,NULL,NULL,0.206,NULL),
+('TN_SOR_2025','D2','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,0.900,NULL),
+
+-- LABOUR
+('TN_SOR_2025','D2','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','D2','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D2','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D2','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,7.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','D2','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','D2','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','D2','LEAD & LIFT','Flyash Block (230mm X 110mm X 70mm)',NULL,NULL,NULL,'LL6',5650.000,NULL),
+('TN_SOR_2025','D2','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.206,NULL),
+('TN_SOR_2025','D2','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',0.900,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','D3','MATERIAL','Brick (500 bricks per Cu.M)','M-0017',NULL,NULL,NULL,5000.000,NULL),
+('TN_SOR_2025','D3','MATERIAL','Cement (13.5 bags or 0.45 Cu.M)','M-0001',NULL,NULL,NULL,0.648,NULL),
+('TN_SOR_2025','D3','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,2.700,NULL),
+
+-- LABOUR
+('TN_SOR_2025','D3','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','D3','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D3','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D3','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,7.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','D3','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','D3','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','D3','LEAD & LIFT','Wire cut Bricks (230mm X 115mm X 75mm)',NULL,NULL,NULL,'LL7',5000.000,NULL),
+('TN_SOR_2025','D3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.650,NULL),
+('TN_SOR_2025','D3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.700,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','D4','MATERIAL','Brick (63 bricks per Cu.M)','M-2307',NULL,NULL,NULL,630.000,NULL),
+('TN_SOR_2025','D4','MATERIAL','Cement (2 bags or 0.0714 Cu.M)','M-0001',NULL,NULL,NULL,0.103,NULL),
+('TN_SOR_2025','D4','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,0.430,NULL),
+
+-- LABOUR
+('TN_SOR_2025','D4','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','D4','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D4','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','D4','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,7.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','D4','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','D4','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','D4','LEAD & LIFT','Burnt Clay Hollow Brick (400mm X 200mm X 200mm)',NULL,NULL,NULL,'LL8',630.000,NULL),
+('TN_SOR_2025','D4','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.100,NULL),
+('TN_SOR_2025','D4','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',0.430,NULL);
+
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','E1','MATERIAL','Cement (30 bags or 1.0 Cu.M)','M-0001',NULL,NULL,NULL,1.440,NULL),
+('TN_SOR_2025','E1','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,NULL,2.000,NULL),
+
+-- LABOUR
+('TN_SOR_2025','E1','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','E1','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E1','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E1','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,7.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','E1','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','E1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','E1','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',1.440,NULL),
+('TN_SOR_2025','E1','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.000,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','E2','MATERIAL','Cement (23.4 bags or 0.78 Cu.M)','M-0001',NULL,NULL,NULL,1.123,NULL),
+('TN_SOR_2025','E2','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,NULL,2.340,NULL),
+
+-- LABOUR
+('TN_SOR_2025','E2','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','E2','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E2','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E2','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,5.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','E2','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','E2','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','E2','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',1.120,NULL),
+('TN_SOR_2025','E2','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.340,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','E3','MATERIAL','Cement (19.5 bags or 0.65 Cu.M)','M-0001',NULL,NULL,NULL,0.936,NULL),
+('TN_SOR_2025','E3','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,NULL,2.600,NULL),
+
+-- LABOUR
+('TN_SOR_2025','E3','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','E3','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E3','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E3','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,5.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','E3','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','E3','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','E3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.940,NULL),
+('TN_SOR_2025','E3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',2.600,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','E4','MATERIAL','Cement (10.5 bags or 0.35 Cu.M)','M-0001',NULL,NULL,NULL,0.504,NULL),
+('TN_SOR_2025','E4','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,NULL,1.750,NULL),
+
+-- LABOUR
+('TN_SOR_2025','E4','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','E4','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E4','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E4','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,5.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','E4','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','E4','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','E4','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.500,NULL),
+('TN_SOR_2025','E4','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',1.750,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','E5','MATERIAL','Cement (9 bags or 0.30 Cu.M)','M-0001',NULL,NULL,NULL,0.432,NULL),
+('TN_SOR_2025','E5','MATERIAL','Fine Aggregate','M-0126',NULL,NULL,NULL,1.800,NULL),
+
+-- LABOUR
+('TN_SOR_2025','E5','LABOUR','Mistri (Head Mason)',NULL,'L-0029',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','E5','LABOUR','Mason',NULL,'L-0029',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E5','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,10.000,NULL),
+('TN_SOR_2025','E5','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,5.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','E5','EQUIPMENT','Scaffolding',NULL,NULL,'H-0118',NULL,1.000,NULL),
+('TN_SOR_2025','E5','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0117',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','E5','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.430,NULL),
+('TN_SOR_2025','E5','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',1.800,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','G1','MATERIAL','Wall Putty','M-3301',NULL,NULL,NULL,15.000,NULL),
+('TN_SOR_2025','G1','MATERIAL','Primer','M-3303',NULL,NULL,NULL,1.000,NULL),
+('TN_SOR_2025','G1','MATERIAL','Paint','M-3305',NULL,NULL,NULL,2.000,NULL),
+
+-- LABOUR
+('TN_SOR_2025','G1','LABOUR','Painter (Head Painter)',NULL,'L-0036',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','G1','LABOUR','Painter',NULL,'L-0036',NULL,NULL,2.000,NULL),
+('TN_SOR_2025','G1','LABOUR','Semi - Skiller Painter',NULL,'L-0077',NULL,NULL,2.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','G1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0125',NULL,1.000,NULL),
+('TN_SOR_2025','G1','EQUIPMENT','Scaffolding',NULL,NULL,'H-0126',NULL,1.000,NULL);
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','G2','MATERIAL','Wall Putty','M-3302',NULL,NULL,NULL,15.000,NULL),
+('TN_SOR_2025','G2','MATERIAL','Primer','M-3304',NULL,NULL,NULL,1.000,NULL),
+('TN_SOR_2025','G2','MATERIAL','Paint','M-3306',NULL,NULL,NULL,2.000,NULL),
+
+-- LABOUR
+('TN_SOR_2025','G2','LABOUR','Painter (Head Painter)',NULL,'L-0036',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','G2','LABOUR','Painter',NULL,'L-0036',NULL,NULL,2.000,NULL),
+('TN_SOR_2025','G2','LABOUR','Semi - Skiller Painter',NULL,'L-0077',NULL,NULL,3.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','G2','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0125',NULL,1.000,NULL),
+('TN_SOR_2025','G2','EQUIPMENT','Scaffolding',NULL,NULL,'H-0126',NULL,1.000,NULL);
+
+CREATE TABLE IF NOT EXISTS work_item_wastage_defaults (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    sor_code VARCHAR(50) NOT NULL,
+    subpackage_code VARCHAR(10) NOT NULL,
+    wastage_percent DECIMAL(6,2) NOT NULL DEFAULT 10.00,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uq_wastage_sor_subpkg (sor_code, subpackage_code),
+
+    CONSTRAINT fk_wastage_subpackage
+      FOREIGN KEY (sor_code, subpackage_code)
+      REFERENCES work_item_subpackage (sor_code, subpackage_code)
+      ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
+INSERT INTO work_item_wastage_defaults (sor_code, subpackage_code, wastage_percent)
+SELECT s.sor_code, s.subpackage_code, 10.00
+FROM work_item_subpackage s
+WHERE s.sor_code = 'TN_SOR_2025'
+ON DUPLICATE KEY UPDATE
+    wastage_percent = VALUES(wastage_percent),
+    updated_at = CURRENT_TIMESTAMP;
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','F1','MATERIAL','Granite','M-0059',NULL,NULL,NULL,10.000,NULL),
+('TN_SOR_2025','F1','MATERIAL','Cement (2.4 bags or 0.083 Cu.M)','M-0001',NULL,NULL,NULL,0.120,NULL),
+('TN_SOR_2025','F1','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,0.600,NULL),
+
+-- LABOUR
+('TN_SOR_2025','F1','LABOUR','Mistri (Head Mason)',NULL,'L-0031',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F1','LABOUR','Mason',NULL,'L-0031',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F1','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,3.000,NULL),
+('TN_SOR_2025','F1','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,2.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','F1','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0122',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','F1','LEAD & LIFT','Granite',NULL,NULL,NULL,'LL9',10.000,'Add Granite thickness for Cu.M'),
+('TN_SOR_2025','F1','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.120,NULL),
+('TN_SOR_2025','F1','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',0.600,NULL);
+
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','F2','MATERIAL','Marble','M-3201',NULL,NULL,NULL,10.000,NULL),
+('TN_SOR_2025','F2','MATERIAL','Cement (2.4 bags or 0.083 Cu.M)','M-0001',NULL,NULL,NULL,0.120,NULL),
+('TN_SOR_2025','F2','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,0.600,NULL),
+
+-- LABOUR
+('TN_SOR_2025','F2','LABOUR','Mistri (Head Mason)',NULL,'L-0031',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F2','LABOUR','Mason',NULL,'L-0031',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F2','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,3.000,NULL),
+('TN_SOR_2025','F2','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,2.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','F2','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0123',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','F2','LEAD & LIFT','Marble',NULL,NULL,NULL,'LL10',10.000,'Add Marble thickness for Cu.M'),
+('TN_SOR_2025','F2','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.120,NULL),
+('TN_SOR_2025','F2','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',0.600,NULL);
+
+
+INSERT INTO work_item_analysis
+(sor_code, subpackage_code, resource_type, item, material_code, labour_code, equipment_code, lead_lift_code, quantity, remark)
+VALUES
+-- MATERIAL
+('TN_SOR_2025','F3','MATERIAL','Vitified Tile (1200mm x 600mm)','M-3003',NULL,NULL,NULL,10.000,NULL),
+('TN_SOR_2025','F3','MATERIAL','Cement (2.4 bags or 0.083 Cu.M)','M-0001',NULL,NULL,NULL,0.120,NULL),
+('TN_SOR_2025','F3','MATERIAL','Fine Aggregate','M-0125',NULL,NULL,NULL,0.600,NULL),
+
+-- LABOUR
+('TN_SOR_2025','F3','LABOUR','Mistri (Head Mason)',NULL,'L-0031',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F3','LABOUR','Mason',NULL,'L-0031',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F3','LABOUR','Male Coolie',NULL,'L-0073',NULL,NULL,1.000,NULL),
+('TN_SOR_2025','F3','LABOUR','Female Coolie',NULL,'L-0098',NULL,NULL,1.000,NULL),
+
+-- EQUIPMENT
+('TN_SOR_2025','F3','EQUIPMENT','Tools and Tackles',NULL,NULL,'H-0124',NULL,1.000,NULL),
+
+-- LEAD & LIFT
+('TN_SOR_2025','F3','LEAD & LIFT','Tiles',NULL,NULL,NULL,'LL11',10.000,'Add Tile thickness for Cu.M'),
+('TN_SOR_2025','F3','LEAD & LIFT','Cement',NULL,NULL,NULL,'LL1',0.120,NULL),
+('TN_SOR_2025','F3','LEAD & LIFT','Fine Aggregate',NULL,NULL,NULL,'LL4',0.600,NULL);

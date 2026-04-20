@@ -22,6 +22,33 @@ def get_conn():
     )
 
 
+def format_indian_number(value, decimals=2):
+    try:
+        num = float(value)
+    except Exception:
+        return ""
+
+    sign = "-" if num < 0 else ""
+    num = abs(num)
+    int_part = str(int(num))
+    frac_part = f"{num:.{decimals}f}".split(".")[1] if decimals > 0 else ""
+
+    if len(int_part) <= 3:
+        grouped = int_part
+    else:
+        last3 = int_part[-3:]
+        rest = int_part[:-3]
+        groups = []
+        while len(rest) > 2:
+            groups.insert(0, rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            groups.insert(0, rest)
+        grouped = ",".join(groups + [last3])
+
+    return f"{sign}{grouped}.{frac_part}" if decimals > 0 else f"{sign}{grouped}"
+
+
 def load_sor_data():
     conn = get_conn()
     try:
@@ -236,7 +263,10 @@ def load_material_code_lookup():
                 m.unique_code,
                 COALESCE(c.category_name, '') AS category_name,
                 COALESCE(m.subcategory_name, '') AS subcategory_name,
-                COALESCE(m.description, '') AS description
+                COALESCE(m.description, '') AS description,
+                COALESCE(m.unit, '') AS unit,
+                COALESCE(m.unit_multiplier, 1) AS unit_multiplier,
+                COALESCE(m.base_rate, 0) AS base_rate
             FROM sor_material_data m
             LEFT JOIN sor_material_category c
               ON c.sor_code = m.sor_code
@@ -256,7 +286,10 @@ def load_labour_code_lookup():
             SELECT
                 l.unique_code,
                 COALESCE(c.category_name, '') AS category_name,
-                COALESCE(l.description, '') AS description
+                COALESCE(l.description, '') AS description,
+                COALESCE(l.unit, '') AS unit,
+                COALESCE(l.unit_multiplier, 1) AS unit_multiplier,
+                COALESCE(l.base_rate, 0) AS base_rate
             FROM sor_labour_data l
             LEFT JOIN sor_labour_category c
               ON c.sor_code = l.sor_code
@@ -273,7 +306,11 @@ def load_equipment_code_lookup():
     conn = get_conn()
     try:
         query = """
-            SELECT unique_code, COALESCE(description, '') AS description
+            SELECT
+                unique_code,
+                COALESCE(description, '') AS description,
+                COALESCE(unit, '') AS unit,
+                COALESCE(base_rate, 0) AS base_rate
             FROM sor_equipment_data
             ORDER BY unique_code
         """
@@ -292,6 +329,45 @@ def load_lead_lift_code_lookup():
             ORDER BY ll_code
         """
         return pd.read_sql(query, conn)
+    finally:
+        conn.close()
+
+
+@st.cache_data(show_spinner=False, ttl=120)
+def load_lead_lift_rate_lookup(sor_code):
+    conn = get_conn()
+    try:
+        query = """
+            SELECT
+                i.sor_code,
+                i.ll_code,
+                COALESCE(i.item_name, '') AS item_name,
+                CASE
+                    WHEN MAX(d.unit) LIKE '1000%%' THEN 1000
+                    WHEN MAX(d.unit) LIKE '100 Nos%%' THEN 100
+                    ELSE 1
+                END AS unit_multiplier,
+                COALESCE(MAX(d.unit), '') AS unit,
+                ROUND(
+                    SUM(
+                        GREATEST(
+                            LEAST(i.distance_km, COALESCE(d.slab_to_km, i.distance_km)) - d.slab_from_km,
+                            0
+                        ) * d.rate_per_km
+                    )
+                    + MAX(d.incidental_charges)
+                    + MAX(d.loading_charges + d.unloading_charges),
+                    2
+                ) AS total_charge_per_unit
+            FROM lead_lift_item_master i
+            JOIN lead_lift_rate_detail d
+              ON d.sor_code = i.sor_code
+             AND d.profile_code = i.profile_code
+            WHERE i.sor_code = %s
+            GROUP BY i.sor_code, i.ll_code, i.item_name
+            ORDER BY i.ll_code
+        """
+        return pd.read_sql(query, conn, params=(sor_code,))
     finally:
         conn.close()
 
@@ -750,11 +826,23 @@ def recalculate_work_item_rate_admin(sor_code):
                             WHEN 'MATERIAL' THEN (a.quantity / COALESCE(m.unit_multiplier, 1)) * m.base_rate
                             WHEN 'LABOUR'   THEN (a.quantity / COALESCE(l.unit_multiplier, 1)) * l.base_rate
                             WHEN 'EQUIPMENT' THEN a.quantity * e.base_rate
-                            WHEN 'LEAD & LIFT' THEN (a.quantity / COALESCE(ll.unit_multiplier, 1)) * ll.total_charge_per_unit
+                            WHEN 'LEAD & LIFT' THEN (
+                                (
+                                    CASE
+                                        WHEN a.lead_lift_code = 'LL9'  AND COALESCE(ws.analysis_unit, '') = 'Sq.M' THEN a.quantity * 0.2
+                                        WHEN a.lead_lift_code = 'LL10' AND COALESCE(ws.analysis_unit, '') = 'Sq.M' THEN a.quantity * 0.15
+                                        WHEN a.lead_lift_code = 'LL11' AND COALESCE(ws.analysis_unit, '') = 'Sq.M' THEN a.quantity * 0.1
+                                        ELSE a.quantity
+                                    END
+                                ) / COALESCE(ll.unit_multiplier, 1)
+                            ) * ll.total_charge_per_unit
                             ELSE 0
                         END
                     ) AS total_a
                 FROM work_item_analysis a
+                LEFT JOIN work_item_subpackage ws
+                    ON ws.sor_code = a.sor_code
+                   AND ws.subpackage_code = a.subpackage_code
                 LEFT JOIN sor_material_data m
                     ON a.resource_type = 'MATERIAL'
                    AND a.material_code = m.unique_code
@@ -899,6 +987,48 @@ def clear_new_analysis_row_inputs(subpkg_code):
 
 st.set_page_config(page_title="Admin Panel", layout="wide")
 st.title("Admin Panel")
+st.markdown(
+    """
+    <style>
+    .stApp .main .block-container {
+        max-width: 100%;
+        padding-left: 0.8rem;
+        padding-right: 0.8rem;
+    }
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.35rem;
+    }
+    div[data-baseweb="input"] input,
+    div[data-baseweb="select"] > div {
+        min-height: 1.95rem !important;
+        font-size: 0.88rem !important;
+    }
+    div[data-baseweb="input"] {
+        margin-bottom: 0.1rem;
+    }
+    div[data-testid="stForm"] {
+        overflow-x: auto;
+    }
+    hr {
+        margin-top: 0.3rem !important;
+        margin-bottom: 0.3rem !important;
+    }
+    .wia-plain-cell {
+        font-size: 1.02rem;
+        line-height: 1.7;
+        font-weight: 500;
+        margin-top: 0.2rem;
+        color: #16a34a;
+        background: transparent;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
+        display: block;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 analysis_tab_codes = []
 analysis_tab_defaults = {}
@@ -920,13 +1050,13 @@ except Exception:
     analysis_tab_codes = []
     analysis_tab_defaults = {}
 
-base_tab_labels = ["SOR Data", "Labour", "Material", "Equipment", "Work Items", "Lead Lift"]
+base_tab_labels = ["SOR Data", "Labour", "Material", "Equipment", "Work Items", "Lead & Lift"]
 all_tab_labels = base_tab_labels + analysis_tab_codes
 active_section = st.selectbox("Section", all_tab_labels, key="active_section")
 
 if active_section == "SOR Data":
     st.subheader("SOR Data")
-    st.caption("Edit existing rows or add a new row, then click Save Changes.")
+    st.caption("Add rows from the top section, or edit existing rows and click Save Changes.")
 
     try:
         df = load_sor_data()
@@ -934,6 +1064,41 @@ if active_section == "SOR Data":
         st.error(f"Failed to load sor_data: {e}")
         st.stop()
 
+    st.markdown("### Add New Row")
+    n1, n2, n3, n4 = st.columns([2, 2, 1, 2])
+    with n1:
+        new_sor_code = st.text_input("new_sor_code", key="new_sor_code", placeholder="TN_SOR_2026", label_visibility="collapsed")
+    with n2:
+        new_state = st.text_input("new_state", key="new_state", placeholder="State Name", label_visibility="collapsed")
+    with n3:
+        new_year = st.text_input("new_year", key="new_year", placeholder="2026", label_visibility="collapsed")
+    with n4:
+        new_name = st.text_input("new_name", key="new_name", placeholder="SOR Name", label_visibility="collapsed")
+
+    if st.button("Add SOR Row", type="primary"):
+        if not new_sor_code.strip():
+            st.error("sor_code is required to add a new SOR row.")
+        else:
+            new_row_df = pd.DataFrame(
+                [
+                    {
+                        "id": None,
+                        "sor_code": new_sor_code.strip(),
+                        "state_name": new_state.strip() or None,
+                        "year": new_year.strip() or None,
+                        "name": new_name.strip() or None,
+                    }
+                ]
+            )
+            try:
+                save_sor_data(new_row_df)
+                st.success("New SOR row added successfully.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add SOR row: {e}")
+
+    st.divider()
+    st.markdown("### Edit Existing SOR Rows")
     with st.form("sor_data_form", clear_on_submit=False):
         h1, h2, h3, h4 = st.columns([2, 2, 1, 2])
         with h1:
@@ -992,33 +1157,11 @@ if active_section == "SOR Data":
             )
             st.divider()
 
-        st.markdown("### Add New Row")
-        n1, n2, n3, n4 = st.columns([2, 2, 1, 2])
-        with n1:
-            new_sor_code = st.text_input("new_sor_code", key="new_sor_code", placeholder="TN_SOR_2026", label_visibility="collapsed")
-        with n2:
-            new_state = st.text_input("new_state", key="new_state", placeholder="State Name", label_visibility="collapsed")
-        with n3:
-            new_year = st.text_input("new_year", key="new_year", placeholder="2026", label_visibility="collapsed")
-        with n4:
-            new_name = st.text_input("new_name", key="new_name", placeholder="SOR Name", label_visibility="collapsed")
-
         save_clicked = st.form_submit_button("Save Changes", type="primary")
 
     if save_clicked:
-        rows_to_save = edited_rows[:]
-        if new_sor_code.strip():
-            rows_to_save.append(
-                {
-                    "id": None,
-                    "sor_code": new_sor_code.strip(),
-                    "state_name": new_state.strip() or None,
-                    "year": new_year.strip() or None,
-                    "name": new_name.strip() or None,
-                }
-            )
         try:
-            save_sor_data(pd.DataFrame(rows_to_save))
+            save_sor_data(pd.DataFrame(edited_rows))
             st.success("sor_data updated successfully.")
             st.rerun()
         except Exception as e:
@@ -1029,7 +1172,7 @@ if active_section == "SOR Data":
 
 if active_section == "Labour":
     st.subheader("Labour Data")
-    st.caption("Edit rows in `sor_labour_data` and click Save Labour Changes at the bottom.")
+    st.caption("Add rows from the top section, or edit rows in `sor_labour_data` and click Save Labour Changes.")
     apply_pending_new_labour_input_reset()
 
     try:
@@ -1043,7 +1186,80 @@ if active_section == "Labour":
         st.error(f"Failed to load sor_labour_category: {e}")
         st.stop()
 
+    st.markdown("### Add New Labour Row")
+    n1, n2, n3, n4, n5, n6 = st.columns([1.6, 1.1, 1.6, 4.0, 1.0, 0.9])
+    with n1:
+        new_sor_code = st.text_input("new_labour_sor_code", key="new_labour_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
+    with n2:
+        category_options = [
+            (
+                "" if pd.isna(cat_row["category_code"]) else str(cat_row["category_code"]).strip(),
+                "" if pd.isna(cat_row["category_name"]) else str(cat_row["category_name"]).strip(),
+            )
+            for _, cat_row in labour_categories_df.iterrows()
+        ]
+        selected_option = st.session_state.get("new_labour_category_choice")
+
+        def _format_category_option(opt):
+            code, name = opt
+            if selected_option == opt:
+                return code
+            return f"{code} - {name}" if name else code
+
+        selected_category = st.selectbox(
+            "new_labour_category_code",
+            options=category_options,
+            index=None if category_options else 0,
+            placeholder="Select category code",
+            format_func=_format_category_option,
+            key="new_labour_category_choice",
+            label_visibility="collapsed",
+        )
+        new_category_code = selected_category[0] if selected_category else ""
+    with n3:
+        new_unique_code = st.text_input("new_labour_unique_code", key="new_labour_unique_code", placeholder="L-9999", label_visibility="collapsed")
+    with n4:
+        new_description = st.text_input("new_labour_description", key="new_labour_description", placeholder="Description", label_visibility="collapsed")
+    with n5:
+        new_unit = st.text_input("new_labour_unit", key="new_labour_unit", placeholder="Day", label_visibility="collapsed")
+    with n6:
+        new_base_rate = st.text_input("new_labour_base_rate", key="new_labour_base_rate", placeholder="0.00", label_visibility="collapsed")
+
+    if st.button("Add Labour Row", type="primary"):
+        if not new_unique_code.strip():
+            st.error("unique_code is required to add a new labour row.")
+        else:
+            new_row_df = pd.DataFrame(
+                [
+                    {
+                        "id": None,
+                        "sor_code": new_sor_code.strip() or None,
+                        "category_code": new_category_code.strip() or None,
+                        "unique_code": new_unique_code.strip(),
+                        "description": new_description.strip() or None,
+                        "unit": new_unit.strip() or None,
+                        "base_rate": new_base_rate.strip() or None,
+                    }
+                ]
+            )
+            try:
+                save_labour_data(new_row_df)
+                st.success("New labour row added successfully.")
+                request_clear_new_labour_inputs()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add labour row: {e}")
+
+    st.divider()
+    st.markdown("### Edit Existing Labour Rows")
+    _lab_top1, _lab_top2, _lab_top3 = st.columns([2, 5, 2])
+    with _lab_top3:
+        reload_labour_clicked = st.button("Reload Labour", key="reload_labour_top")
+
     with st.form("labour_data_form", clear_on_submit=False):
+        _lab_form_top1, _lab_form_top2 = st.columns([2, 6])
+        with _lab_form_top1:
+            save_labour_clicked = st.form_submit_button("Save Labour Changes", type="primary", use_container_width=True)
         h1, h2, h3, h4, h5, h6, h7 = st.columns([0.8, 1.6, 1.1, 1.6, 4.0, 1.0, 0.9])
         with h1:
             st.markdown("**id**")
@@ -1129,71 +1345,15 @@ if active_section == "Labour":
             edited_labour_rows.append(row_payload)
             st.divider()
 
-        st.markdown("### Add New Labour Row")
-        n1, n2, n3, n4, n5, n6 = st.columns([1.6, 1.1, 1.6, 4.0, 1.0, 0.9])
-        with n1:
-            new_sor_code = st.text_input("new_labour_sor_code", key="new_labour_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
-        with n2:
-            category_options = [
-                (
-                    "" if pd.isna(cat_row["category_code"]) else str(cat_row["category_code"]).strip(),
-                    "" if pd.isna(cat_row["category_name"]) else str(cat_row["category_name"]).strip(),
-                )
-                for _, cat_row in labour_categories_df.iterrows()
-            ]
-            selected_option = st.session_state.get("new_labour_category_choice")
-
-            def _format_category_option(opt):
-                code, name = opt
-                if selected_option == opt:
-                    return code
-                return f"{code} - {name}" if name else code
-
-            selected_category = st.selectbox(
-                "new_labour_category_code",
-                options=category_options,
-                index=None if category_options else 0,
-                placeholder="Select category code",
-                format_func=_format_category_option,
-                key="new_labour_category_choice",
-                label_visibility="collapsed",
-            )
-            new_category_code = selected_category[0] if selected_category else ""
-        with n3:
-            new_unique_code = st.text_input("new_labour_unique_code", key="new_labour_unique_code", placeholder="L-9999", label_visibility="collapsed")
-        with n4:
-            new_description = st.text_input("new_labour_description", key="new_labour_description", placeholder="Description", label_visibility="collapsed")
-        with n5:
-            new_unit = st.text_input("new_labour_unit", key="new_labour_unit", placeholder="Day", label_visibility="collapsed")
-        with n6:
-            new_base_rate = st.text_input("new_labour_base_rate", key="new_labour_base_rate", placeholder="0.00", label_visibility="collapsed")
-
-        save_labour_clicked = st.form_submit_button("Save Labour Changes", type="primary")
-
     if save_labour_clicked:
-        rows_to_save = edited_labour_rows[:]
-        if new_unique_code.strip():
-            rows_to_save.append(
-                {
-                    "id": None,
-                    "sor_code": new_sor_code.strip() or None,
-                    "category_code": new_category_code.strip() or None,
-                    "unique_code": new_unique_code.strip(),
-                    "description": new_description.strip() or None,
-                    "unit": new_unit.strip() or None,
-                    "base_rate": new_base_rate.strip() or None,
-                }
-            )
-
         try:
-            save_labour_data(pd.DataFrame(rows_to_save))
+            save_labour_data(pd.DataFrame(edited_labour_rows))
             st.success("sor_labour_data updated successfully.")
-            request_clear_new_labour_inputs()
             st.rerun()
         except Exception as e:
             st.error(f"Failed to save sor_labour_data: {e}")
 
-    if st.button("Reload Labour"):
+    if reload_labour_clicked:
         st.rerun()
 
 if active_section == "Material":
@@ -1303,7 +1463,13 @@ if active_section == "Material":
 
     st.divider()
     st.markdown("### Edit Existing Material Rows")
+    _mat_top1, _mat_top2, _mat_top3 = st.columns([2, 5, 2])
+    with _mat_top3:
+        reload_material_clicked = st.button("Reload Material", key="reload_material_top")
     with st.form("material_edit_form", clear_on_submit=False):
+        _mat_form_top1, _mat_form_top2 = st.columns([2, 6])
+        with _mat_form_top1:
+            save_material_clicked = st.form_submit_button("Save Material Changes", type="primary", use_container_width=True)
         h1, h2, h3, h4, h5, h6, h7, h8, h9 = st.columns([0.7, 1.4, 1.0, 2.8, 1.4, 3.0, 1.0, 0.9, 0.9])
         with h1:
             st.markdown("**id**")
@@ -1372,8 +1538,6 @@ if active_section == "Material":
             )
             st.divider()
 
-        save_material_clicked = st.form_submit_button("Save Material Changes", type="primary")
-
     if save_material_clicked:
         try:
             save_material_data(pd.DataFrame(edited_material_rows))
@@ -1385,12 +1549,12 @@ if active_section == "Material":
         except Exception as e:
             st.error(f"Failed to save sor_material_data: {e}")
 
-    if st.button("Reload Material"):
+    if reload_material_clicked:
         st.rerun()
 
 if active_section == "Equipment":
     st.subheader("Equipment Data")
-    st.caption("Edit rows in `sor_equipment_data` and click Save Equipment Changes.")
+    st.caption("Add rows from the top section, or edit rows in `sor_equipment_data` and click Save Equipment Changes.")
     apply_pending_new_equipment_input_reset()
 
     try:
@@ -1399,7 +1563,53 @@ if active_section == "Equipment":
         st.error(f"Failed to load sor_equipment_data: {e}")
         st.stop()
 
+    st.markdown("### Add New Equipment Row")
+    n1, n2, n3, n4, n5 = st.columns([1.6, 1.6, 4.0, 1.0, 1.0])
+    with n1:
+        new_sor_code = st.text_input("new_equipment_sor_code", key="new_equipment_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
+    with n2:
+        new_unique_code = st.text_input("new_equipment_unique_code", key="new_equipment_unique_code", placeholder="H-9999", label_visibility="collapsed")
+    with n3:
+        new_description = st.text_input("new_equipment_description", key="new_equipment_description", placeholder="Description", label_visibility="collapsed")
+    with n4:
+        new_unit = st.text_input("new_equipment_unit", key="new_equipment_unit", placeholder="Day", label_visibility="collapsed")
+    with n5:
+        new_base_rate = st.text_input("new_equipment_base_rate", key="new_equipment_base_rate", placeholder="0.00", label_visibility="collapsed")
+
+    if st.button("Add Equipment Row", type="primary"):
+        if not new_unique_code.strip():
+            st.error("unique_code is required to add a new equipment row.")
+        else:
+            new_row_df = pd.DataFrame(
+                [
+                    {
+                        "id": None,
+                        "sor_code": new_sor_code.strip() or None,
+                        "unique_code": new_unique_code.strip(),
+                        "description": new_description.strip() or None,
+                        "unit": new_unit.strip() or None,
+                        "base_rate": new_base_rate.strip() or None,
+                    }
+                ]
+            )
+            try:
+                save_equipment_data(new_row_df)
+                st.success("New equipment row added successfully.")
+                request_clear_new_equipment_inputs()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add equipment row: {e}")
+
+    st.divider()
+    st.markdown("### Edit Existing Equipment Rows")
+    _eq_top1, _eq_top2, _eq_top3 = st.columns([2, 5, 2])
+    with _eq_top3:
+        reload_equipment_clicked = st.button("Reload Equipment", key="reload_equipment_top")
+
     with st.form("equipment_data_form", clear_on_submit=False):
+        _eq_form_top1, _eq_form_top2 = st.columns([2, 6])
+        with _eq_form_top1:
+            save_equipment_clicked = st.form_submit_button("Save Equipment Changes", type="primary", use_container_width=True)
         h1, h2, h3, h4, h5, h6 = st.columns([0.7, 1.6, 1.6, 4.0, 1.0, 1.0])
         with h1:
             st.markdown("**id**")
@@ -1469,49 +1679,20 @@ if active_section == "Equipment":
             )
             st.divider()
 
-        st.markdown("### Add New Equipment Row")
-        n1, n2, n3, n4, n5 = st.columns([1.6, 1.6, 4.0, 1.0, 1.0])
-        with n1:
-            new_sor_code = st.text_input("new_equipment_sor_code", key="new_equipment_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
-        with n2:
-            new_unique_code = st.text_input("new_equipment_unique_code", key="new_equipment_unique_code", placeholder="H-9999", label_visibility="collapsed")
-        with n3:
-            new_description = st.text_input("new_equipment_description", key="new_equipment_description", placeholder="Description", label_visibility="collapsed")
-        with n4:
-            new_unit = st.text_input("new_equipment_unit", key="new_equipment_unit", placeholder="Day", label_visibility="collapsed")
-        with n5:
-            new_base_rate = st.text_input("new_equipment_base_rate", key="new_equipment_base_rate", placeholder="0.00", label_visibility="collapsed")
-
-        save_equipment_clicked = st.form_submit_button("Save Equipment Changes", type="primary")
-
     if save_equipment_clicked:
-        rows_to_save = edited_equipment_rows[:]
-        if new_unique_code.strip():
-            rows_to_save.append(
-                {
-                    "id": None,
-                    "sor_code": new_sor_code.strip() or None,
-                    "unique_code": new_unique_code.strip(),
-                    "description": new_description.strip() or None,
-                    "unit": new_unit.strip() or None,
-                    "base_rate": new_base_rate.strip() or None,
-                }
-            )
-
         try:
-            save_equipment_data(pd.DataFrame(rows_to_save))
+            save_equipment_data(pd.DataFrame(edited_equipment_rows))
             st.success("sor_equipment_data updated successfully.")
-            request_clear_new_equipment_inputs()
             st.rerun()
         except Exception as e:
             st.error(f"Failed to save sor_equipment_data: {e}")
 
-    if st.button("Reload Equipment"):
+    if reload_equipment_clicked:
         st.rerun()
 
 if active_section == "Work Items":
     st.subheader("Work Item Package Data")
-    st.caption("Edit rows in `work_item_package` and click Save Work Item Package Changes.")
+    st.caption("Add rows from the top section, or edit rows in `work_item_package` and click Save Work Item Package Changes.")
     apply_pending_new_work_item_package_input_reset()
 
     try:
@@ -1544,6 +1725,39 @@ if active_section == "Work Items":
         st.info("No sor_code found in work_item_package to recalculate.")
 
     st.divider()
+    st.markdown("### Add New Work Item Package Row")
+    n1, n2, n3 = st.columns([1.6, 1.2, 3.5])
+    with n1:
+        new_sor_code = st.text_input("new_wip_sor_code", key="new_wip_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
+    with n2:
+        new_package_code = st.text_input("new_wip_package_code", key="new_wip_package_code", placeholder="A", label_visibility="collapsed")
+    with n3:
+        new_package_name = st.text_input("new_wip_package_name", key="new_wip_package_name", placeholder="Package Name", label_visibility="collapsed")
+
+    if st.button("Add Work Item Package Row", type="primary"):
+        if not new_sor_code.strip() or not new_package_code.strip():
+            st.error("sor_code and package_code are required to add a new work item package row.")
+        else:
+            new_row_df = pd.DataFrame(
+                [
+                    {
+                        "id": None,
+                        "sor_code": new_sor_code.strip(),
+                        "package_code": new_package_code.strip(),
+                        "package_name": new_package_name.strip() or None,
+                    }
+                ]
+            )
+            try:
+                save_work_item_package_data(new_row_df)
+                st.success("New work item package row added successfully.")
+                request_clear_new_work_item_package_inputs()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add work_item_package row: {e}")
+
+    st.divider()
+    st.markdown("### Edit Existing Work Item Package Rows")
 
     with st.form("work_item_package_form", clear_on_submit=False):
         h1, h2, h3, h4 = st.columns([0.8, 1.6, 1.2, 3.5])
@@ -1595,33 +1809,12 @@ if active_section == "Work Items":
             )
             st.divider()
 
-        st.markdown("### Add New Work Item Package Row")
-        n1, n2, n3 = st.columns([1.6, 1.2, 3.5])
-        with n1:
-            new_sor_code = st.text_input("new_wip_sor_code", key="new_wip_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
-        with n2:
-            new_package_code = st.text_input("new_wip_package_code", key="new_wip_package_code", placeholder="A", label_visibility="collapsed")
-        with n3:
-            new_package_name = st.text_input("new_wip_package_name", key="new_wip_package_name", placeholder="Package Name", label_visibility="collapsed")
-
         save_wip_clicked = st.form_submit_button("Save Work Item Package Changes", type="primary")
 
     if save_wip_clicked:
-        rows_to_save = edited_wip_rows[:]
-        if new_sor_code.strip() and new_package_code.strip():
-            rows_to_save.append(
-                {
-                    "id": None,
-                    "sor_code": new_sor_code.strip(),
-                    "package_code": new_package_code.strip(),
-                    "package_name": new_package_name.strip() or None,
-                }
-            )
-
         try:
-            save_work_item_package_data(pd.DataFrame(rows_to_save))
+            save_work_item_package_data(pd.DataFrame(edited_wip_rows))
             st.success("work_item_package updated successfully.")
-            request_clear_new_work_item_package_inputs()
             st.rerun()
         except Exception as e:
             st.error(f"Failed to save work_item_package: {e}")
@@ -1631,7 +1824,7 @@ if active_section == "Work Items":
 
     st.divider()
     st.subheader("Work Item Subpackage Data")
-    st.caption("Edit rows in `work_item_subpackage` and click Save Work Item Subpackage Changes.")
+    st.caption("Add rows from the top section, or edit rows in `work_item_subpackage` and click Save Work Item Subpackage Changes.")
     apply_pending_new_work_item_subpackage_input_reset()
 
     try:
@@ -1639,6 +1832,52 @@ if active_section == "Work Items":
     except Exception as e:
         st.error(f"Failed to load work_item_subpackage: {e}")
         st.stop()
+
+    st.markdown("### Add New Work Item Subpackage Row")
+    n1, n2, n3, n4, n5, n6, n7 = st.columns([1.4, 1.1, 1.2, 2.0, 2.2, 1.1, 1.0])
+    with n1:
+        new_sor_code = st.text_input("new_wisp_sor_code", key="new_wisp_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
+    with n2:
+        new_package_code = st.text_input("new_wisp_package_code", key="new_wisp_package_code", placeholder="A", label_visibility="collapsed")
+    with n3:
+        new_subpackage_code = st.text_input("new_wisp_subpackage_code", key="new_wisp_subpackage_code", placeholder="A1", label_visibility="collapsed")
+    with n4:
+        new_subpackage_name = st.text_input("new_wisp_subpackage_name", key="new_wisp_subpackage_name", placeholder="Subpackage Name", label_visibility="collapsed")
+    with n5:
+        new_description = st.text_input("new_wisp_description", key="new_wisp_description", placeholder="Description", label_visibility="collapsed")
+    with n6:
+        new_analysis_qty = st.text_input("new_wisp_analysis_qty", key="new_wisp_analysis_qty", placeholder="0.00", label_visibility="collapsed")
+    with n7:
+        new_analysis_unit = st.text_input("new_wisp_analysis_unit", key="new_wisp_analysis_unit", placeholder="Cu.M", label_visibility="collapsed")
+
+    if st.button("Add Work Item Subpackage Row", type="primary"):
+        if not new_sor_code.strip() or not new_subpackage_code.strip():
+            st.error("sor_code and subpackage_code are required to add a new work item subpackage row.")
+        else:
+            new_row_df = pd.DataFrame(
+                [
+                    {
+                        "id": None,
+                        "sor_code": new_sor_code.strip(),
+                        "package_code": new_package_code.strip() or None,
+                        "subpackage_code": new_subpackage_code.strip(),
+                        "subpackage_name": new_subpackage_name.strip() or None,
+                        "description": new_description.strip() or None,
+                        "analysis_quantity": new_analysis_qty.strip() or None,
+                        "analysis_unit": new_analysis_unit.strip() or None,
+                    }
+                ]
+            )
+            try:
+                save_work_item_subpackage_data(new_row_df)
+                st.success("New work item subpackage row added successfully.")
+                request_clear_new_work_item_subpackage_inputs()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add work_item_subpackage row: {e}")
+
+    st.divider()
+    st.markdown("### Edit Existing Work Item Subpackage Rows")
 
     with st.form("work_item_subpackage_form", clear_on_submit=False):
         h1, h2, h3, h4, h5, h6, h7, h8 = st.columns([0.7, 1.4, 1.1, 1.2, 2.0, 2.2, 1.1, 1.0])
@@ -1730,45 +1969,12 @@ if active_section == "Work Items":
             )
             st.divider()
 
-        st.markdown("### Add New Work Item Subpackage Row")
-        n1, n2, n3, n4, n5, n6, n7 = st.columns([1.4, 1.1, 1.2, 2.0, 2.2, 1.1, 1.0])
-        with n1:
-            new_sor_code = st.text_input("new_wisp_sor_code", key="new_wisp_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
-        with n2:
-            new_package_code = st.text_input("new_wisp_package_code", key="new_wisp_package_code", placeholder="A", label_visibility="collapsed")
-        with n3:
-            new_subpackage_code = st.text_input("new_wisp_subpackage_code", key="new_wisp_subpackage_code", placeholder="A1", label_visibility="collapsed")
-        with n4:
-            new_subpackage_name = st.text_input("new_wisp_subpackage_name", key="new_wisp_subpackage_name", placeholder="Subpackage Name", label_visibility="collapsed")
-        with n5:
-            new_description = st.text_input("new_wisp_description", key="new_wisp_description", placeholder="Description", label_visibility="collapsed")
-        with n6:
-            new_analysis_qty = st.text_input("new_wisp_analysis_qty", key="new_wisp_analysis_qty", placeholder="0.00", label_visibility="collapsed")
-        with n7:
-            new_analysis_unit = st.text_input("new_wisp_analysis_unit", key="new_wisp_analysis_unit", placeholder="Cu.M", label_visibility="collapsed")
-
         save_wisp_clicked = st.form_submit_button("Save Work Item Subpackage Changes", type="primary")
 
     if save_wisp_clicked:
-        rows_to_save = edited_wisp_rows[:]
-        if new_sor_code.strip() and new_subpackage_code.strip():
-            rows_to_save.append(
-                {
-                    "id": None,
-                    "sor_code": new_sor_code.strip(),
-                    "package_code": new_package_code.strip() or None,
-                    "subpackage_code": new_subpackage_code.strip(),
-                    "subpackage_name": new_subpackage_name.strip() or None,
-                    "description": new_description.strip() or None,
-                    "analysis_quantity": new_analysis_qty.strip() or None,
-                    "analysis_unit": new_analysis_unit.strip() or None,
-                }
-            )
-
         try:
-            save_work_item_subpackage_data(pd.DataFrame(rows_to_save))
+            save_work_item_subpackage_data(pd.DataFrame(edited_wisp_rows))
             st.success("work_item_subpackage updated successfully.")
-            request_clear_new_work_item_subpackage_inputs()
             st.rerun()
         except Exception as e:
             st.error(f"Failed to save work_item_subpackage: {e}")
@@ -1776,9 +1982,9 @@ if active_section == "Work Items":
     if st.button("Reload Work Item Subpackage"):
         st.rerun()
 
-if active_section == "Lead Lift":
-    st.subheader("Lead Lift Item Master")
-    st.caption("Edit rows in `lead_lift_item_master` and save changes.")
+if active_section == "Lead & Lift":
+    st.subheader("Lead & Lift Item Master")
+    st.caption("Add rows from the top section, or edit rows in `lead_lift_item_master` and save changes.")
 
     try:
         ll_df = load_lead_lift_item_master_data()
@@ -1786,7 +1992,51 @@ if active_section == "Lead Lift":
         st.error(f"Failed to load lead_lift_item_master: {e}")
         st.stop()
 
+    st.markdown("### Add New Lead & Lift Item")
+    n1, n2, n3, n4, n5 = st.columns([1.6, 1.2, 3.2, 1.2, 1.2])
+    with n1:
+        new_sor_code = st.text_input("new_ll_sor_code", key="new_ll_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
+    with n2:
+        new_ll_code = st.text_input("new_ll_code", key="new_ll_code", placeholder="LL6", label_visibility="collapsed")
+    with n3:
+        new_item_name = st.text_input("new_ll_item_name", key="new_ll_item_name", placeholder="Item Name", label_visibility="collapsed")
+    with n4:
+        new_profile_code = st.text_input("new_ll_profile_code", key="new_ll_profile_code", placeholder="TP1", label_visibility="collapsed")
+    with n5:
+        new_distance_km = st.text_input("new_ll_distance_km", key="new_ll_distance_km", placeholder="0.00", label_visibility="collapsed")
+
+    if st.button("Add Lead & Lift Item", type="primary"):
+        if not new_sor_code.strip() or not new_ll_code.strip():
+            st.error("sor_code and ll_code are required to add a new lead & lift row.")
+        else:
+            new_row_df = pd.DataFrame(
+                [
+                    {
+                        "sor_code": new_sor_code.strip(),
+                        "ll_code": new_ll_code.strip(),
+                        "item_name": new_item_name.strip() or None,
+                        "profile_code": new_profile_code.strip() or None,
+                        "distance_km": new_distance_km.strip() or None,
+                    }
+                ]
+            )
+            try:
+                save_lead_lift_item_master_data(new_row_df)
+                st.success("New lead & lift row added successfully.")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Failed to add lead & lift row: {e}")
+
+    st.divider()
+    st.markdown("### Edit Existing Lead & Lift Rows")
+    _ll_top1, _ll_top2, _ll_top3 = st.columns([2, 5, 2])
+    with _ll_top3:
+        reload_ll_clicked = st.button("Reload Lead & Lift", key="reload_ll_top")
+
     with st.form("lead_lift_item_master_form", clear_on_submit=False):
+        _ll_form_top1, _ll_form_top2 = st.columns([2, 6])
+        with _ll_form_top1:
+            save_ll_clicked = st.form_submit_button("Save Lead & Lift Changes", type="primary", use_container_width=True)
         h1, h2, h3, h4, h5 = st.columns([1.6, 1.2, 3.2, 1.2, 1.2])
         with h1:
             st.markdown("**sor_code**")
@@ -1852,41 +2102,15 @@ if active_section == "Lead Lift":
             )
             st.divider()
 
-        st.markdown("### Add New Lead Lift Item")
-        n1, n2, n3, n4, n5 = st.columns([1.6, 1.2, 3.2, 1.2, 1.2])
-        with n1:
-            new_sor_code = st.text_input("new_ll_sor_code", key="new_ll_sor_code", placeholder="TN_SOR_2025", label_visibility="collapsed")
-        with n2:
-            new_ll_code = st.text_input("new_ll_code", key="new_ll_code", placeholder="LL6", label_visibility="collapsed")
-        with n3:
-            new_item_name = st.text_input("new_ll_item_name", key="new_ll_item_name", placeholder="Item Name", label_visibility="collapsed")
-        with n4:
-            new_profile_code = st.text_input("new_ll_profile_code", key="new_ll_profile_code", placeholder="TP1", label_visibility="collapsed")
-        with n5:
-            new_distance_km = st.text_input("new_ll_distance_km", key="new_ll_distance_km", placeholder="0.00", label_visibility="collapsed")
-
-        save_ll_clicked = st.form_submit_button("Save Lead Lift Changes", type="primary")
-
     if save_ll_clicked:
-        rows_to_save = edited_ll_rows[:]
-        if new_sor_code.strip() and new_ll_code.strip():
-            rows_to_save.append(
-                {
-                    "sor_code": new_sor_code.strip(),
-                    "ll_code": new_ll_code.strip(),
-                    "item_name": new_item_name.strip() or None,
-                    "profile_code": new_profile_code.strip() or None,
-                    "distance_km": new_distance_km.strip() or None,
-                }
-            )
         try:
-            save_lead_lift_item_master_data(pd.DataFrame(rows_to_save))
+            save_lead_lift_item_master_data(pd.DataFrame(edited_ll_rows))
             st.success("lead_lift_item_master updated successfully.")
             st.rerun()
         except Exception as e:
             st.error(f"Failed to save lead_lift_item_master: {e}")
 
-    if st.button("Reload Lead Lift"):
+    if reload_ll_clicked:
         st.rerun()
 
 try:
@@ -1916,156 +2140,164 @@ for _subpkg_code in analysis_tab_codes:
         ] if not _work_item_analysis_df.empty else pd.DataFrame()
 
         _has_lead_lift = "lead_lift_code" in _work_item_analysis_columns
-        _header_cols = [0.7, 1.3, 1.2, 1.7, 1.4, 1.2, 1.2, 1.1, 0.9, 1.5, 0.9]
+        _default_sor = analysis_tab_defaults.get(_subpkg_code, "TN_SOR_2025")
+        if not _sub_df.empty and "sor_code" in _sub_df.columns:
+            _first_sor = str(_sub_df["sor_code"].iloc[0]).strip()
+            if _first_sor:
+                _default_sor = _first_sor
+
+        _mat_df = load_material_code_lookup()
+        _lab_df = load_labour_code_lookup()
+        _eq_df = load_equipment_code_lookup()
+        _ll_rate_df = load_lead_lift_rate_lookup(_default_sor) if _has_lead_lift and _default_sor else pd.DataFrame()
+
+        _material_meta_map = {}
+        for _, r in _mat_df.iterrows():
+            _code = str(r["unique_code"]).strip()
+            _desc = str(r["description"]).strip()
+            _subcategory = str(r["subcategory_name"]).strip()
+            _mult = float(r["unit_multiplier"]) if pd.notna(r["unit_multiplier"]) else 1.0
+            _rate = float(r["base_rate"]) if pd.notna(r["base_rate"]) else 0.0
+            _material_meta_map[_code] = {
+                "item": _subcategory or _desc,
+                "description": _desc,
+                "unit": str(r["unit"]).strip(),
+                "multiplier": _mult if _mult > 0 else 1.0,
+                "rate": _rate,
+            }
+
+        _labour_meta_map = {}
+        for _, r in _lab_df.iterrows():
+            _code = str(r["unique_code"]).strip()
+            _desc = str(r["description"]).strip()
+            _category = str(r["category_name"]).strip()
+            _mult = float(r["unit_multiplier"]) if pd.notna(r["unit_multiplier"]) else 1.0
+            _rate = float(r["base_rate"]) if pd.notna(r["base_rate"]) else 0.0
+            _labour_meta_map[_code] = {
+                "item": _desc,
+                "description": _desc if not _category else f"{_category} - {_desc}",
+                "unit": str(r["unit"]).strip(),
+                "multiplier": _mult if _mult > 0 else 1.0,
+                "rate": _rate,
+            }
+
+        _equipment_meta_map = {}
+        for _, r in _eq_df.iterrows():
+            _code = str(r["unique_code"]).strip()
+            _desc = str(r["description"]).strip()
+            _rate = float(r["base_rate"]) if pd.notna(r["base_rate"]) else 0.0
+            _equipment_meta_map[_code] = {
+                "item": _desc,
+                "description": _desc,
+                "unit": str(r["unit"]).strip(),
+                "multiplier": 1.0,
+                "rate": _rate,
+            }
+
+        _lead_lift_meta_map = {}
         if _has_lead_lift:
-            _header_cols = [0.7, 1.3, 1.2, 1.7, 1.2, 1.1, 1.1, 1.1, 0.9, 1.4, 0.9]
-
-        with st.form(f"wia_form_{_subpkg_code}", clear_on_submit=False):
-            _h = st.columns(_header_cols)
-            _h[0].markdown("**id**")
-            _h[1].markdown("**sor_code**")
-            _h[2].markdown("**resource_type**")
-            _h[3].markdown("**item**")
-            _h[4].markdown("**material_code**")
-            _h[5].markdown("**labour_code**")
-            _h[6].markdown("**equipment_code**")
-            _idx_after_equipment = 7
-            if _has_lead_lift:
-                _h[7].markdown("**lead_lift_code**")
-                _idx_after_equipment = 8
-            _h[_idx_after_equipment].markdown("**qty**")
-            _h[_idx_after_equipment + 1].markdown("**remark**")
-            _h[_idx_after_equipment + 2].markdown("**delete**")
-            st.divider()
-
-            _edited_rows = []
-            _ids_to_delete = []
-            for _, _row in _sub_df.iterrows():
-                _rid = int(_row["id"])
-                _c = st.columns(_header_cols)
-                _c[0].text_input("id", value=str(_rid), key=f"wia_id_{_subpkg_code}_{_rid}", disabled=True, label_visibility="collapsed")
-                _sor_code = _c[1].text_input(
-                    "sor_code",
-                    value="" if pd.isna(_row.get("sor_code")) else str(_row.get("sor_code")),
-                    key=f"wia_sor_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _resource_type = _c[2].selectbox(
-                    "resource_type",
-                    options=["MATERIAL", "LABOUR", "EQUIPMENT", "LEAD & LIFT"],
-                    index=["MATERIAL", "LABOUR", "EQUIPMENT", "LEAD & LIFT"].index(str(_row.get("resource_type"))) if str(_row.get("resource_type")) in ["MATERIAL", "LABOUR", "EQUIPMENT", "LEAD & LIFT"] else 0,
-                    key=f"wia_type_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _item = _c[3].text_input(
-                    "item",
-                    value="" if pd.isna(_row.get("item")) else str(_row.get("item")),
-                    key=f"wia_item_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _material_code = _c[4].text_input(
-                    "material_code",
-                    value="" if pd.isna(_row.get("material_code")) else str(_row.get("material_code")),
-                    key=f"wia_mat_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _labour_code = _c[5].text_input(
-                    "labour_code",
-                    value="" if pd.isna(_row.get("labour_code")) else str(_row.get("labour_code")),
-                    key=f"wia_lab_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _equipment_code = _c[6].text_input(
-                    "equipment_code",
-                    value="" if pd.isna(_row.get("equipment_code")) else str(_row.get("equipment_code")),
-                    key=f"wia_eq_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _lead_lift_code = None
-                _col_idx = 7
-                if _has_lead_lift:
-                    _lead_lift_code = _c[7].text_input(
-                        "lead_lift_code",
-                        value="" if pd.isna(_row.get("lead_lift_code")) else str(_row.get("lead_lift_code")),
-                        key=f"wia_ll_{_subpkg_code}_{_rid}",
-                        label_visibility="collapsed",
-                    )
-                    _col_idx = 8
-                _quantity = _c[_col_idx].text_input(
-                    "quantity",
-                    value="" if pd.isna(_row.get("quantity")) else str(float(_row.get("quantity"))),
-                    key=f"wia_qty_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _remark = _c[_col_idx + 1].text_input(
-                    "remark",
-                    value="" if pd.isna(_row.get("remark")) else str(_row.get("remark")),
-                    key=f"wia_rem_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-                _delete_row = _c[_col_idx + 2].checkbox(
-                    "delete",
-                    key=f"wia_del_{_subpkg_code}_{_rid}",
-                    label_visibility="collapsed",
-                )
-
-                _row_payload = {
-                    "id": _rid,
-                    "sor_code": _sor_code.strip(),
-                    "subpackage_code": _subpkg_code,
-                    "resource_type": _resource_type.strip(),
-                    "item": _item.strip() or None,
-                    "material_code": _material_code.strip() or None,
-                    "labour_code": _labour_code.strip() or None,
-                    "equipment_code": _equipment_code.strip() or None,
-                    "quantity": _quantity.strip() or None,
-                    "remark": _remark.strip() or None,
+            for _, r in _ll_rate_df.iterrows():
+                _code = str(r["ll_code"]).strip()
+                _item_name = str(r["item_name"]).strip()
+                _mult = float(r["unit_multiplier"]) if pd.notna(r["unit_multiplier"]) else 1.0
+                _rate = float(r["total_charge_per_unit"]) if pd.notna(r["total_charge_per_unit"]) else 0.0
+                _lead_lift_meta_map[_code] = {
+                    "item": _item_name,
+                    "description": _item_name,
+                    "unit": str(r["unit"]).strip(),
+                    "multiplier": _mult if _mult > 0 else 1.0,
+                    "rate": _rate,
                 }
-                if _has_lead_lift:
-                    _row_payload["lead_lift_code"] = _lead_lift_code.strip() if _lead_lift_code else None
 
-                _edited_rows.append(_row_payload)
-                if _delete_row:
-                    _ids_to_delete.append(_rid)
-                st.divider()
-            _a_save, _a_spacer, _a_del = st.columns([2, 5, 2])
-            with _a_save:
-                _save_existing_wia_clicked = st.form_submit_button(
-                    f"Save Existing {_subpkg_code} Analysis",
-                    type="primary",
-                    use_container_width=True,
-                )
-            with _a_del:
-                _delete_existing_wia_clicked = st.form_submit_button(
-                    f"Delete Selected {_subpkg_code}",
-                    type="secondary",
-                    use_container_width=True,
-                )
+        _mat_options = [(_code, f"{_code} - {_meta['description']}") for _code, _meta in _material_meta_map.items()]
+        _lab_options = [(_code, f"{_code} - {_meta['description']}") for _code, _meta in _labour_meta_map.items()]
+        _eq_options = [(_code, f"{_code} - {_meta['description']}") for _code, _meta in _equipment_meta_map.items()]
+        _ll_options = [(_code, f"{_code} - {_meta['description']}") for _code, _meta in _lead_lift_meta_map.items()] if _has_lead_lift else []
 
-        if _save_existing_wia_clicked:
+        def _fmt_per(_unit, _multiplier):
+            _unit_text = "" if _unit is None else str(_unit).strip()
+            _mult = 1.0 if _multiplier is None else float(_multiplier)
+            if _mult > 1:
+                _m = int(_mult) if abs(_mult - int(_mult)) < 1e-9 else round(_mult, 3)
+                return f"{_m} {_unit_text}".strip()
+            return _unit_text
+
+        def _get_resource_details(_resource_type, _code, _ll_dynamic_map=None):
+            _code_clean = "" if _code is None else str(_code).strip()
+            if not _code_clean:
+                return None
+            if _resource_type == "MATERIAL":
+                _meta = _material_meta_map.get(_code_clean)
+            elif _resource_type == "LABOUR":
+                _meta = _labour_meta_map.get(_code_clean)
+            elif _resource_type == "EQUIPMENT":
+                _meta = _equipment_meta_map.get(_code_clean)
+            elif _resource_type == "LEAD & LIFT":
+                _source_map = _ll_dynamic_map if isinstance(_ll_dynamic_map, dict) else _lead_lift_meta_map
+                _meta = _source_map.get(_code_clean)
+            else:
+                _meta = None
+
+            if not _meta:
+                return None
+            _rate = float(_meta.get("rate", 0.0))
+            _mult = float(_meta.get("multiplier", 1.0))
+            if _mult <= 0:
+                _mult = 1.0
+            return {
+                "item": _meta.get("item", ""),
+                "description": _meta.get("description", ""),
+                "unit": _meta.get("unit", ""),
+                "rate": _rate,
+                "per": _fmt_per(_meta.get("unit", ""), _mult),
+                "multiplier": _mult,
+                "unit_rate": _rate / _mult,
+            }
+
+        def _get_unit_rate(_resource_type, _code, _ll_dynamic_map=None):
+            _details = _get_resource_details(_resource_type, _code, _ll_dynamic_map)
+            if not _details:
+                return None
+            return _details["unit_rate"]
+
+        def _get_line_amount(_resource_type, _code, _qty_raw, _ll_dynamic_map=None):
+            _unit_rate = _get_unit_rate(_resource_type, _code, _ll_dynamic_map)
+            if _unit_rate is None:
+                return None
             try:
-                save_work_item_analysis_data(pd.DataFrame(_edited_rows), _work_item_analysis_columns)
-                st.success(f"Existing work_item_analysis rows updated for {_subpkg_code}.")
+                _qty_val = float(str(_qty_raw).strip())
+            except Exception:
+                return None
+            return _unit_rate * _qty_val
+
+        st.markdown("### Recalculate Work Item Rate")
+        st.caption(f"SOR for recalculation: `{_default_sor}`")
+        if st.button(
+            f"Recalculate work_item_rate ({_subpkg_code})",
+            key=f"wia_recalc_{_subpkg_code}",
+            type="primary",
+        ):
+            try:
+                recalculate_work_item_rate_admin(str(_default_sor).strip())
+                st.success(f"work_item_rate recalculated for {_default_sor} ({_subpkg_code}).")
                 st.rerun()
             except Exception as _e:
-                st.error(f"Failed to save existing work_item_analysis rows for {_subpkg_code}: {_e}")
-
-        if _delete_existing_wia_clicked:
-            if not _ids_to_delete:
-                st.warning("Select at least one row in the delete column.")
-            else:
-                try:
-                    delete_work_item_analysis_rows(_ids_to_delete)
-                    _recalc_sor = (_sub_df["sor_code"].iloc[0] if not _sub_df.empty else analysis_tab_defaults.get(_subpkg_code, "TN_SOR_2025"))
-                    recalculate_work_item_rate_admin(str(_recalc_sor).strip())
-                    st.success(f"Deleted {len(_ids_to_delete)} row(s) from {_subpkg_code}.")
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"Failed to delete rows for {_subpkg_code}: {_e}")
+                st.error(f"Failed to recalculate work_item_rate for {_subpkg_code}: {_e}")
 
         st.markdown("### Add New Analysis Row")
-        _default_sor = analysis_tab_defaults.get(_subpkg_code, "TN_SOR_2025")
-        _a1, _a2, _a3, _a4, _a5 = st.columns([1.4, 1.4, 4.6, 1.2, 2.0])
+        _new_header_cols = st.columns([1.1, 1.2, 2.8, 2.0, 0.9, 0.8, 0.9, 1.0, 1.2, 1.5, 1.0])
+        _new_header_cols[0].markdown("**SOR**")
+        _new_header_cols[1].markdown("**Type**")
+        _new_header_cols[2].markdown("**Item Name**")
+        _new_header_cols[3].markdown("**Code/Description**")
+        _new_header_cols[4].markdown("**Quantity**")
+        _new_header_cols[5].markdown("**Unit**")
+        _new_header_cols[6].markdown("**Rate**")
+        _new_header_cols[7].markdown("**Per**")
+        _new_header_cols[8].markdown("**Amt**")
+        _new_header_cols[9].markdown("**Remark**")
+        _new_header_cols[10].markdown("")
+        _a1, _a2, _a3, _a4, _a5, _a6, _a7, _a8, _a9, _a10, _a11 = st.columns([1.1, 1.2, 2.8, 2.0, 0.9, 0.8, 0.9, 1.0, 1.2, 1.5, 1.0])
         with _a1:
             _new_sor_code = st.text_input(
                 "new_sor",
@@ -2083,113 +2315,122 @@ for _subpkg_code in analysis_tab_codes:
                 key=f"wia_new_type_{_subpkg_code}",
                 label_visibility="collapsed",
             )
-        with _a3:
+
+        _ll_add_rate_map = {}
+        with _a4:
             _selected_ref = None
-            _selected_item_text = ""
             if _new_resource_type == "MATERIAL":
-                _mat_df = load_material_code_lookup()
-                _mat_options = [
-                    (
-                        str(r["unique_code"]).strip(),
-                        str(r["category_name"]).strip(),
-                        str(r["subcategory_name"]).strip(),
-                        str(r["description"]).strip(),
-                    )
-                    for _, r in _mat_df.iterrows()
-                ]
                 _selected_ref = st.selectbox(
                     "material_ref",
                     options=_mat_options,
                     index=None if _mat_options else 0,
-                    placeholder="Select material code",
-                    format_func=lambda o: f"{o[0]} - {o[1]} - {o[2]} - {o[3]}",
+                    placeholder="Select material",
+                    format_func=lambda o: o[1],
                     key=f"wia_new_ref_{_subpkg_code}",
                     label_visibility="collapsed",
                 )
-                _selected_item_text = _selected_ref[3] if _selected_ref else ""
             elif _new_resource_type == "LABOUR":
-                _lab_df = load_labour_code_lookup()
-                _lab_options = [
-                    (
-                        str(r["unique_code"]).strip(),
-                        str(r["category_name"]).strip(),
-                        str(r["description"]).strip(),
-                    )
-                    for _, r in _lab_df.iterrows()
-                ]
                 _selected_ref = st.selectbox(
                     "labour_ref",
                     options=_lab_options,
                     index=None if _lab_options else 0,
-                    placeholder="Select labour code",
-                    format_func=lambda o: f"{o[0]} - {o[1]} - {o[2]}",
+                    placeholder="Select labour",
+                    format_func=lambda o: o[1],
                     key=f"wia_new_ref_{_subpkg_code}",
                     label_visibility="collapsed",
                 )
-                _selected_item_text = _selected_ref[2] if _selected_ref else ""
             elif _new_resource_type == "EQUIPMENT":
-                _eq_df = load_equipment_code_lookup()
-                _eq_options = [
-                    (str(r["unique_code"]).strip(), str(r["description"]).strip())
-                    for _, r in _eq_df.iterrows()
-                ]
                 _selected_ref = st.selectbox(
                     "equipment_ref",
                     options=_eq_options,
                     index=None if _eq_options else 0,
-                    placeholder="Select equipment code",
-                    format_func=lambda o: f"{o[0]} - {o[1]}",
+                    placeholder="Select equipment",
+                    format_func=lambda o: o[1],
                     key=f"wia_new_ref_{_subpkg_code}",
                     label_visibility="collapsed",
                 )
-                _selected_item_text = _selected_ref[1] if _selected_ref else ""
             elif _new_resource_type == "LEAD & LIFT":
-                _ll_df = load_lead_lift_code_lookup()
-                _ll_options = [
-                    (str(r["ll_code"]).strip(), str(r["item_name"]).strip())
-                    for _, r in _ll_df.iterrows()
-                ]
+                _ll_add_df = load_lead_lift_rate_lookup((_new_sor_code or _default_sor).strip()) if (_new_sor_code or _default_sor).strip() else pd.DataFrame()
+                for _, _r in _ll_add_df.iterrows():
+                    _ll_code = str(_r["ll_code"]).strip()
+                    _ll_item = str(_r["item_name"]).strip()
+                    _ll_mult = float(_r["unit_multiplier"]) if pd.notna(_r["unit_multiplier"]) else 1.0
+                    _ll_add_rate_map[_ll_code] = {
+                        "item": _ll_item,
+                        "description": _ll_item,
+                        "unit": str(_r["unit"]).strip(),
+                        "multiplier": _ll_mult if _ll_mult > 0 else 1.0,
+                        "rate": float(_r["total_charge_per_unit"]) if pd.notna(_r["total_charge_per_unit"]) else 0.0,
+                    }
+                _ll_add_options = [(_code, f"{_code} - {_meta['description']}") for _code, _meta in _ll_add_rate_map.items()]
                 _selected_ref = st.selectbox(
                     "leadlift_ref",
-                    options=_ll_options,
-                    index=None if _ll_options else 0,
-                    placeholder="Select lead & lift code",
-                    format_func=lambda o: f"{o[0]} - {o[1]}",
+                    options=_ll_add_options,
+                    index=None if _ll_add_options else 0,
+                    placeholder="Select lead & lift",
+                    format_func=lambda o: o[1],
                     key=f"wia_new_ref_{_subpkg_code}",
                     label_visibility="collapsed",
                 )
-                _selected_item_text = _selected_ref[1] if _selected_ref else ""
-        with _a4:
+
+        _selected_code = _selected_ref[0] if _selected_ref else ""
+        _selected_details = _get_resource_details(_new_resource_type, _selected_code, _ll_add_rate_map)
+        _selected_item_text = "" if not _selected_details else str(_selected_details.get("item", ""))
+        _new_unit_rate = None if not _selected_details else _selected_details.get("unit_rate")
+
+        with _a3:
+            _item_override_key = f"wia_new_item_{_subpkg_code}"
+            if _item_override_key not in st.session_state:
+                st.session_state[_item_override_key] = _selected_item_text
+            elif st.session_state.get(f"wia_new_ref_{_subpkg_code}") != _selected_ref:
+                st.session_state[_item_override_key] = _selected_item_text
+            _new_item = st.text_input(
+                "Item",
+                key=_item_override_key,
+                label_visibility="collapsed",
+            )
+        with _a5:
             _new_quantity = st.text_input(
                 "new_qty",
                 key=f"wia_new_qty_{_subpkg_code}",
                 placeholder="0.000",
                 label_visibility="collapsed",
             )
-        with _a5:
+        _new_amount = _get_line_amount(_new_resource_type, _selected_code, _new_quantity, _ll_add_rate_map)
+
+        with _a6:
+            st.markdown(
+                f"<div class='wia-plain-cell'>{'' if not _selected_details else str(_selected_details.get('unit', ''))}</div>",
+                unsafe_allow_html=True,
+            )
+        with _a7:
+            st.markdown(
+                f"<div class='wia-plain-cell'>{'' if _new_unit_rate is None else format_indian_number(_new_unit_rate, 2)}</div>",
+                unsafe_allow_html=True,
+            )
+        with _a8:
+            st.markdown(
+                f"<div class='wia-plain-cell'>{'' if not _selected_details else str(_selected_details.get('per', ''))}</div>",
+                unsafe_allow_html=True,
+            )
+        with _a9:
+            st.markdown(
+                f"<div class='wia-plain-cell'>{'' if _new_amount is None else format_indian_number(_new_amount, 2)}</div>",
+                unsafe_allow_html=True,
+            )
+        with _a10:
             _new_remark = st.text_input(
                 "new_rem",
                 key=f"wia_new_rem_{_subpkg_code}",
                 placeholder="Remark",
                 label_visibility="collapsed",
             )
-
-        _b1, _b2 = st.columns([3, 2])
-        with _b1:
-            _item_override_key = f"wia_new_item_{_subpkg_code}"
-            if _item_override_key not in st.session_state:
-                st.session_state[_item_override_key] = _selected_item_text
-            elif st.session_state.get(f"wia_new_ref_{_subpkg_code}") != _selected_ref:
-                st.session_state[_item_override_key] = _selected_item_text
-
-            st.caption("Item (editable)")
-            _new_item = st.text_input(
-                "Item",
-                key=_item_override_key,
-                help="Auto-filled from selected code. You can edit it before saving.",
-            )
-        with _b2:
+        with _a11:
+            st.markdown("")
+        _ab1, _ab2, _ab3 = st.columns([8.5, 1.5, 2.0])
+        with _ab3:
             _add_wia_clicked = st.button(f"Add New {_subpkg_code} Analysis Row", key=f"wia_add_btn_{_subpkg_code}", type="primary")
+        st.caption("Amount = Quantity × Rate.")
 
         if _add_wia_clicked:
             _new_row = {
@@ -2223,3 +2464,189 @@ for _subpkg_code in analysis_tab_codes:
                     st.rerun()
                 except Exception as _e:
                     st.error(f"Failed to add work_item_analysis row for {_subpkg_code}: {_e}")
+
+        st.divider()
+        _header_cols = [1.1, 1.2, 2.8, 2.1, 1.0, 0.9, 1.0, 1.1, 1.2, 1.4, 0.8]
+
+        with st.form(f"wia_form_{_subpkg_code}", clear_on_submit=False):
+            _h = st.columns(_header_cols)
+            _h[0].markdown("**SOR**")
+            _h[1].markdown("**Type**")
+            _h[2].markdown("**Item Name**")
+            _h[3].markdown("**Code/Description**")
+            _h[4].markdown("**Quantity**")
+            _h[5].markdown("**Unit**")
+            _h[6].markdown("**Rate**")
+            _h[7].markdown("**Per**")
+            _h[8].markdown("**Amt**")
+            _h[9].markdown("**Remark**")
+            _h[10].markdown("**Delete**")
+            st.divider()
+
+            _edited_rows = []
+            _ids_to_delete = []
+            _table_total_amt = 0.0
+            for _, _row in _sub_df.iterrows():
+                _rid = int(_row["id"])
+                _c = st.columns(_header_cols)
+                _sor_code = _c[0].text_input(
+                    "sor_code",
+                    value="" if pd.isna(_row.get("sor_code")) else str(_row.get("sor_code")),
+                    key=f"wia_sor_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+
+                _resource_options = ["MATERIAL", "LABOUR", "EQUIPMENT"]
+                if _has_lead_lift:
+                    _resource_options.append("LEAD & LIFT")
+                _existing_type = str(_row.get("resource_type"))
+                _resource_type = _c[1].selectbox(
+                    "resource_type",
+                    options=_resource_options,
+                    index=_resource_options.index(_existing_type) if _existing_type in _resource_options else 0,
+                    key=f"wia_type_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+
+                if _resource_type == "MATERIAL":
+                    _current_code = "" if pd.isna(_row.get("material_code")) else str(_row.get("material_code")).strip()
+                    _base_options = _mat_options[:]
+                elif _resource_type == "LABOUR":
+                    _current_code = "" if pd.isna(_row.get("labour_code")) else str(_row.get("labour_code")).strip()
+                    _base_options = _lab_options[:]
+                elif _resource_type == "EQUIPMENT":
+                    _current_code = "" if pd.isna(_row.get("equipment_code")) else str(_row.get("equipment_code")).strip()
+                    _base_options = _eq_options[:]
+                else:
+                    _current_code = "" if pd.isna(_row.get("lead_lift_code")) else str(_row.get("lead_lift_code")).strip()
+                    _base_options = _ll_options[:] if _has_lead_lift else []
+
+                _known_codes = {o[0] for o in _base_options}
+                if _current_code and _current_code not in _known_codes:
+                    _base_options = [(_current_code, f"{_current_code} (existing)")] + _base_options
+
+                _selected_code = _c[3].selectbox(
+                    "code",
+                    options=_base_options,
+                    index=next((i for i, opt in enumerate(_base_options) if opt[0] == _current_code), 0) if _base_options else None,
+                    placeholder="Select code",
+                    format_func=lambda o: o[1],
+                    key=f"wia_code_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+                _selected_code_value = _selected_code[0] if _selected_code else ""
+                _details = _get_resource_details(_resource_type, _selected_code_value)
+
+                _item_default = "" if not _details else str(_details.get("item", ""))
+                _item = _c[2].text_input(
+                    "item",
+                    value=_item_default if pd.isna(_row.get("item")) or str(_row.get("item")).strip() == "" else str(_row.get("item")),
+                    key=f"wia_item_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+
+                _quantity = _c[4].text_input(
+                    "quantity",
+                    value="" if pd.isna(_row.get("quantity")) else str(float(_row.get("quantity"))),
+                    key=f"wia_qty_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+
+                _unit_rate = None if not _details else _details.get("unit_rate")
+                _line_amount = _get_line_amount(_resource_type, _selected_code_value, _quantity)
+                _c[5].markdown(
+                    f"<div class='wia-plain-cell'>{'' if not _details else str(_details.get('unit', ''))}</div>",
+                    unsafe_allow_html=True,
+                )
+                _c[6].markdown(
+                    f"<div class='wia-plain-cell'>{'' if _unit_rate is None else format_indian_number(_unit_rate, 2)}</div>",
+                    unsafe_allow_html=True,
+                )
+                _c[7].markdown(
+                    f"<div class='wia-plain-cell'>{'' if not _details else str(_details.get('per', ''))}</div>",
+                    unsafe_allow_html=True,
+                )
+                _c[8].markdown(
+                    f"<div class='wia-plain-cell'>{'' if _line_amount is None else format_indian_number(_line_amount, 2)}</div>",
+                    unsafe_allow_html=True,
+                )
+                if _line_amount is not None:
+                    _table_total_amt += _line_amount
+
+                _remark = _c[9].text_input(
+                    "remark",
+                    value="" if pd.isna(_row.get("remark")) else str(_row.get("remark")),
+                    key=f"wia_rem_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+                _delete_row = _c[10].checkbox(
+                    "delete",
+                    key=f"wia_del_{_subpkg_code}_{_rid}",
+                    label_visibility="collapsed",
+                )
+
+                _row_payload = {
+                    "id": _rid,
+                    "sor_code": _sor_code.strip(),
+                    "subpackage_code": _subpkg_code,
+                    "resource_type": _resource_type.strip(),
+                    "item": _item.strip() or None,
+                    "material_code": None,
+                    "labour_code": None,
+                    "equipment_code": None,
+                    "quantity": _quantity.strip() or None,
+                    "remark": _remark.strip() or None,
+                }
+                if _resource_type == "MATERIAL":
+                    _row_payload["material_code"] = _selected_code_value or None
+                elif _resource_type == "LABOUR":
+                    _row_payload["labour_code"] = _selected_code_value or None
+                elif _resource_type == "EQUIPMENT":
+                    _row_payload["equipment_code"] = _selected_code_value or None
+                elif _resource_type == "LEAD & LIFT" and _has_lead_lift:
+                    _row_payload["lead_lift_code"] = _selected_code_value or None
+
+                _edited_rows.append(_row_payload)
+                if _delete_row:
+                    _ids_to_delete.append(_rid)
+                st.divider()
+
+            _tcols = st.columns(_header_cols)
+            _tcols[7].markdown("**Total Amt**")
+            _tcols[8].markdown(f"**{format_indian_number(_table_total_amt, 2)}**")
+            st.divider()
+
+            _a_save, _a_spacer, _a_del = st.columns([2, 5, 2])
+            with _a_save:
+                _save_existing_wia_clicked = st.form_submit_button(
+                    f"Save Existing {_subpkg_code} Analysis",
+                    type="primary",
+                    use_container_width=True,
+                )
+            with _a_del:
+                _delete_existing_wia_clicked = st.form_submit_button(
+                    f"Delete Selected {_subpkg_code}",
+                    type="secondary",
+                    use_container_width=True,
+                )
+
+        if _save_existing_wia_clicked:
+            try:
+                save_work_item_analysis_data(pd.DataFrame(_edited_rows), _work_item_analysis_columns)
+                st.success(f"Existing work_item_analysis rows updated for {_subpkg_code}.")
+                st.rerun()
+            except Exception as _e:
+                st.error(f"Failed to save existing work_item_analysis rows for {_subpkg_code}: {_e}")
+
+        if _delete_existing_wia_clicked:
+            if not _ids_to_delete:
+                st.warning("Select at least one row in the delete column.")
+            else:
+                try:
+                    delete_work_item_analysis_rows(_ids_to_delete)
+                    recalculate_work_item_rate_admin(str(_default_sor).strip())
+                    st.success(f"Deleted {len(_ids_to_delete)} row(s) from {_subpkg_code}.")
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Failed to delete rows for {_subpkg_code}: {_e}")
+

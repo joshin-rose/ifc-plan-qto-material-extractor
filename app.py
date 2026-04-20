@@ -132,6 +132,93 @@ def update_work_item_charges(charges):
         conn.close()
 
 
+def get_project_sor_code(project_code, ifc_file_name):
+    query = """
+        SELECT sor_database
+        FROM project_master
+        WHERE project_code = %s AND ifc_file_name = %s
+        LIMIT 1
+    """
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute(query, (project_code, ifc_file_name))
+        row = cur.fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def get_or_init_wastage_defaults(sor_code, work_item_codes):
+    codes = [str(c or "").strip() for c in (work_item_codes or []) if str(c or "").strip()]
+    if not sor_code or not codes:
+        return {}
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO work_item_wastage_defaults (sor_code, subpackage_code)
+            VALUES (%s, %s)
+            ON DUPLICATE KEY UPDATE subpackage_code = VALUES(subpackage_code)
+            """,
+            [(sor_code, code) for code in codes],
+        )
+
+        placeholders = ", ".join(["%s"] * len(codes))
+        cur.execute(
+            f"""
+            SELECT subpackage_code, wastage_percent
+            FROM work_item_wastage_defaults
+            WHERE sor_code = %s
+              AND subpackage_code IN ({placeholders})
+            """,
+            (sor_code, *codes),
+        )
+        rows = cur.fetchall()
+        conn.commit()
+        return {str(code): float(pct if pct is not None else 0.0) for code, pct in rows}
+    finally:
+        conn.close()
+
+
+def save_wastage_defaults(sor_code, wastage_map):
+    if not sor_code or not wastage_map:
+        return
+
+    rows = []
+    for code, pct in (wastage_map or {}).items():
+        code_s = str(code or "").strip()
+        if not code_s:
+            continue
+        try:
+            pct_val = float(pct if pct not in ("", None) else 0.0)
+        except Exception:
+            pct_val = 0.0
+        rows.append((sor_code, code_s, pct_val))
+
+    if not rows:
+        return
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.executemany(
+            """
+            INSERT INTO work_item_wastage_defaults (sor_code, subpackage_code, wastage_percent)
+            VALUES (%s, %s, %s)
+            ON DUPLICATE KEY UPDATE
+                wastage_percent = VALUES(wastage_percent),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def submit_all(project_payload, file_bytes, original_file_name, charges):
     original_name = safe_filename(original_file_name)
     unique_prefix = uuid.uuid4().hex[:8]
@@ -577,10 +664,10 @@ def fetch_qto_report(project_code, ifc_file_name):
                     "Wastage (%)": "0.00",
                     "Material:Name": r["material_name"],
                     "Material:Description": r["material_description"],
-                    "Total Volume (m\u00B3)": f"{r['total_volume']:,.3f}",
+                    "Total Volume (m\u00B3)": _format_indian_number(r["total_volume"], 3),
                 }
                 if include_area:
-                    row_out["Total Area (m\u00B2)"] = f"{r['total_area']:,.3f}"
+                    row_out["Total Area (m\u00B2)"] = _format_indian_number(r["total_area"], 3)
                 out.append(row_out)
 
             return out
@@ -783,12 +870,64 @@ def resolve_subpackage_row(material_name, material_description, catalog_rows):
 
 
 def _wastage_map_key(work_item_code, material_name, material_description=None):
-    return "||".join(
-        [
-            str(work_item_code or "").strip(),
-            str(material_name or "").strip().lower(),
-        ]
-    )
+    return str(work_item_code or "").strip()
+
+
+def _get_wastage_pct(wastage_map, work_item_code, default_pct=0.0):
+    code = str(work_item_code or "").strip()
+    if not code:
+        return 0.0
+    try:
+        raw = wastage_map.get(code, default_pct)
+        return float(raw if raw not in ("", None) else default_pct)
+    except Exception:
+        return float(default_pct)
+
+
+def extract_unique_work_item_codes(*sections):
+    seen = set()
+    out = []
+    for rows in sections:
+        for r in rows or []:
+            code = str(r.get("Work Item Code", "")).strip()
+            if code and code not in seen:
+                seen.add(code)
+                out.append(code)
+    out.sort()
+    return out
+
+
+def _format_indian_number(value, decimals=2):
+    try:
+        num = float(value)
+    except Exception:
+        return ""
+
+    sign = "-" if num < 0 else ""
+    num = abs(num)
+    int_part = str(int(num))
+    frac_part = f"{num:.{decimals}f}".split(".")[1] if decimals > 0 else ""
+
+    if len(int_part) <= 3:
+        grouped = int_part
+    else:
+        last3 = int_part[-3:]
+        rest = int_part[:-3]
+        groups = []
+        while len(rest) > 2:
+            groups.insert(0, rest[-2:])
+            rest = rest[:-2]
+        if rest:
+            groups.insert(0, rest)
+        grouped = ",".join(groups + [last3])
+
+    if decimals > 0:
+        return f"{sign}{grouped}.{frac_part}"
+    return f"{sign}{grouped}"
+
+
+def _format_inr(value):
+    return f"\u20B9 {_format_indian_number(value, 2)}"
 
 
 def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
@@ -875,52 +1014,34 @@ def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
                 unit = ""
                 price = 0.0
 
-            amount = qty * price
-            wastage_pct = float(
-                wastage_map.get(_wastage_map_key(code, material_name, material_description), 0.0) or 0.0
-            )
-            wastage_volume = qty * (wastage_pct / 100.0)
-            wastage_amt = wastage_volume * price
-            total_amt = amount + wastage_amt
+            wastage_pct = _get_wastage_pct(wastage_map, code, default_pct=0.0)
+            total_volume = qty * (1 + (wastage_pct / 100.0))
+            total_amt = total_volume * price
             key = (code, item, unit, price)
             if key not in grouped:
                 grouped[key] = {
                     "qty": 0.0,
-                    "amount": 0.0,
-                    "wastage_pct_weighted_sum": 0.0,
-                    "wastage_volume": 0.0,
-                    "wastage_amt": 0.0,
+                    "total_volume": 0.0,
                     "total_amt": 0.0,
                 }
             grouped[key]["qty"] += qty
-            grouped[key]["amount"] += amount
-            grouped[key]["wastage_pct_weighted_sum"] += wastage_pct * qty
-            grouped[key]["wastage_volume"] += wastage_volume
-            grouped[key]["wastage_amt"] += wastage_amt
+            grouped[key]["total_volume"] += total_volume
             grouped[key]["total_amt"] += total_amt
 
         rows = []
         grand_total = 0.0
         for (code, item, unit, price), vals in grouped.items():
-            qty = vals["qty"]
-            amount = vals["amount"]
-            wastage_pct_display = (vals["wastage_pct_weighted_sum"] / qty) if qty > 0 else 0.0
-            wastage_volume = vals["wastage_volume"]
-            wastage_amt = vals["wastage_amt"]
+            total_volume = vals["total_volume"]
             total_amt = vals["total_amt"]
             grand_total += total_amt
             rows.append(
                 {
                     "Work Item Code": code,
                     "Item": item,
-                    "Area / Volume (m\u00B3)": f"{qty:,.3f}",
+                    "Area / Volume": _format_indian_number(total_volume, 3),
                     "Unit": unit,
-                    "Price (\u20B9)": f"{price:,.2f}",
-                    "Amount (\u20B9)": f"{amount:,.2f}",
-                    "Wastage (%)": f"{wastage_pct_display:,.2f}",
-                    "Wastage Volume (m\u00B3)": f"{wastage_volume:,.3f}",
-                    "Wastage Amt (\u20B9)": f"{wastage_amt:,.2f}",
-                    "Total Amt (\u20B9)": f"{total_amt:,.2f}",
+                    "Price (\u20B9)": _format_indian_number(price, 2),
+                    "Total Amount (\u20B9)": _format_indian_number(total_amt, 2),
                 }
             )
 
@@ -935,22 +1056,45 @@ def build_tender_estimate_csv_bytes(rows, grand_total):
     headers = [
         "Work Item Code",
         "Item",
-        "Area / Volume (m\u00B3)",
+        "Area / Volume",
         "Unit",
         "Price (\u20B9)",
-        "Amount (\u20B9)",
-        "Wastage (%)",
-        "Wastage Volume (m\u00B3)",
-        "Wastage Amt (\u20B9)",
-        "Total Amt (\u20B9)",
+        "Total Amount (\u20B9)",
     ]
     writer.writerow(headers)
     for row in rows:
         writer.writerow([row.get(h, "") for h in headers])
     writer.writerow([])
-    writer.writerow(["", "", "", "", "", "", "", "", "Grand Total", f"\u20B9 {grand_total:,.2f}"])
+    writer.writerow(["", "", "", "", "Grand Total", _format_inr(grand_total)])
     # Keep ASCII labels for maximum compatibility across Excel/encodings.
     return output.getvalue().encode("utf-8-sig")
+
+
+def build_tender_estimate_excel_bytes(rows, grand_total):
+    headers = [
+        "Work Item Code",
+        "Item",
+        "Area / Volume",
+        "Unit",
+        "Price (\u20B9)",
+        "Total Amount (\u20B9)",
+    ]
+    sheet_rows = [headers]
+    for row in rows:
+        sheet_rows.append([row.get(h, "") for h in headers])
+    sheet_rows.append(["", "", "", "", "Grand Total", _format_inr(grand_total)])
+
+    with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
+        tmp_path = tmp.name
+    try:
+        Final_Report.build_workbook([("Tender_Estimate", sheet_rows)], tmp_path)
+        with open(tmp_path, "rb") as f:
+            return f.read()
+    finally:
+        try:
+            os.remove(tmp_path)
+        except Exception:
+            pass
 
 
 def render_simple_table(rows, wide=False):
@@ -965,26 +1109,28 @@ def render_simple_table(rows, wide=False):
             for h in headers
         )
         body_parts.append(f"<tr>{tds}</tr>")
-    table_layout = "fixed"
-    wrap_overflow = "visible"
-    table_font = "12px" if wide else "15px"
-    td_whitespace = "normal"
+    table_layout = "auto"
+    wrap_overflow = "auto"
+    table_font = "12px" if wide else "13px"
+    td_whitespace = "nowrap"
 
     table_html = f"""
     <style>
       .formal-table-wrap {{
         overflow-x: {wrap_overflow};
-        margin-bottom: 1rem;
+        margin-bottom: 0.5rem;
+        border: 1px solid #dcdcdc;
+        border-radius: 8px;
       }}
       .formal-table {{
         width: 100%;
         table-layout: {table_layout};
-        min-width: 100%;
+        min-width: 980px;
         border-collapse: separate;
         border-spacing: 0;
-        border: 1px solid #c9c9c9;
-        border-radius: 10px;
-        overflow: hidden;
+        border: 0;
+        border-radius: 0;
+        overflow: visible;
         background: #ffffff;
         color: #111111;
         font-size: {table_font};
@@ -998,15 +1144,15 @@ def render_simple_table(rows, wide=False):
         border-bottom: 2px solid #d6d6d6;
         font-weight: 700;
         text-align: left;
-        padding: 10px 12px;
+        padding: 6px 8px;
         white-space: nowrap;
       }}
       .formal-table td {{
         color: #111111 !important;
-        padding: 10px 12px;
+        padding: 6px 8px;
         border-bottom: 1px solid #ececec;
         white-space: {td_whitespace};
-        word-break: break-word;
+        word-break: normal;
       }}
       .formal-table tbody tr:nth-child(even) {{
         background: #fafafa;
@@ -1029,6 +1175,89 @@ def render_simple_table(rows, wide=False):
     st.markdown(table_html, unsafe_allow_html=True)
 
 
+def render_tender_estimate_table(rows):
+    if not rows:
+        return
+    headers = list(rows[0].keys())
+    numeric_headers = {
+        "Area / Volume",
+        "Price (₹)",
+        "Total Amount (₹)",
+    }
+
+    head_html = "".join(
+        f"<th class=\"{'num' if h in numeric_headers else ''}\">{html.escape(str(h))}</th>"
+        for h in headers
+    )
+    body_parts = []
+    for idx, row in enumerate(rows, start=1):
+        cells = []
+        for h in headers:
+            val = "" if row.get(h) is None else str(row.get(h))
+            cls = "num" if h in numeric_headers else ""
+            cells.append(f"<td class=\"{cls}\">{html.escape(val)}</td>")
+        cells.insert(0, f"<td class=\"rowno\">{idx}</td>")
+        body_parts.append(f"<tr>{''.join(cells)}</tr>")
+
+    table_html = f"""
+    <style>
+      .tender-table-wrap {{
+        overflow-x: auto;
+        margin: 0.2rem 0 0.6rem 0;
+        border: 1px solid #d7dbe0;
+        border-radius: 8px;
+        background: #fff;
+      }}
+      .tender-table {{
+        width: 100%;
+        min-width: 980px;
+        border-collapse: collapse;
+        font-size: 12px;
+      }}
+      .tender-table thead th {{
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: #f5f7fa;
+        color: #111827;
+        padding: 6px 8px;
+        border-bottom: 1px solid #d7dbe0;
+        text-align: left;
+        white-space: nowrap;
+        font-weight: 700;
+      }}
+      .tender-table td {{
+        padding: 6px 8px;
+        border-bottom: 1px solid #eef1f4;
+        color: #111827;
+        white-space: nowrap;
+      }}
+      .tender-table tbody tr:nth-child(even) {{
+        background: #fafbfc;
+      }}
+      .tender-table .num {{
+        text-align: right;
+      }}
+      .tender-table .rowno {{
+        width: 40px;
+        text-align: center;
+        color: #6b7280;
+      }}
+    </style>
+    <div class="tender-table-wrap">
+      <table class="tender-table">
+        <thead>
+          <tr><th>#</th>{head_html}</tr>
+        </thead>
+        <tbody>
+          {''.join(body_parts)}
+        </tbody>
+      </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
+
+
 def split_qto_tables(rows, wastage_map=None):
     wastage_map = wastage_map or {}
     first_rows = []
@@ -1039,14 +1268,7 @@ def split_qto_tables(rows, wastage_map=None):
         work_item_code = r.get("Work Item Code", "")
         material_name = r.get("Material:Name", "")
         material_description = r.get("Material:Description", "")
-        wastage_raw = wastage_map.get(
-            _wastage_map_key(work_item_code, material_name, material_description),
-            r.get("Wastage (%)", ""),
-        )
-        try:
-            wastage_val = None if wastage_raw in ("", None) else float(wastage_raw)
-        except Exception:
-            wastage_val = None
+        wastage_val = _get_wastage_pct(wastage_map, work_item_code, default_pct=0.0)
 
         first_rows.append(
             {
@@ -1086,14 +1308,20 @@ def split_qto_tables(rows, wastage_map=None):
 
     second_rows = []
     for _, row in second_acc.items():
+        wastage_pct = float(row.get("Wastage (%)") or 0.0)
+        base_vol = float(row["_vol"])
+        wastage_vol = base_vol * (wastage_pct / 100.0)
+        total_vol = base_vol + wastage_vol
         second_rows.append(
             {
                 "Work Item Code": row["Work Item Code"],
                 "Material:Name": row["Material:Name"],
                 "Material:Description": "; ".join(sorted(row["_descriptions"])),
-                "Wastage (%)": row["Wastage (%)"],
-                "Total Volume (m³)": f"{row['_vol']:,.3f}",
-                "Total Area (m²)": f"{row['_area']:,.3f}",
+                "Wastage (%)": _format_indian_number(wastage_pct, 2),
+                "Base Volume (m³)": _format_indian_number(base_vol, 3),
+                "Wastage Volume (m³)": _format_indian_number(wastage_vol, 3),
+                "Total Volume (m³)": _format_indian_number(total_vol, 3),
+                "Total Area (m²)": _format_indian_number(row["_area"], 3),
             }
         )
     return first_rows, second_rows
@@ -1104,7 +1332,11 @@ def render_qto_table1_inputs(rows, key_prefix):
         return []
 
     sample = rows[0]
-    vol_key = "Total Volume (m³)" if "Total Volume (m³)" in sample else "Total Volume (mÂ³)"
+    vol_key = (
+        "Base Volume (m³)"
+        if "Base Volume (m³)" in sample
+        else ("Total Volume (m³)" if "Total Volume (m³)" in sample else "Total Volume (mÂ³)")
+    )
     area_key = "Total Area (m²)" if "Total Area (m²)" in sample else "Total Area (mÂ²)"
 
     h = st.columns([1.2, 1.0, 1.1, 1.6, 1.1, 1.1])
@@ -1134,53 +1366,271 @@ def render_qto_table2_inputs(rows, key_prefix):
         return []
 
     sample = rows[0]
-    vol_key = "Total Volume (m³)" if "Total Volume (m³)" in sample else "Total Volume (mÂ³)"
+    base_vol_key = (
+        "Base Volume (m³)"
+        if "Base Volume (m³)" in sample
+        else ("Total Volume (m³)" if "Total Volume (m³)" in sample else "Total Volume (mÂ³)")
+    )
     area_key = "Total Area (m²)" if "Total Area (m²)" in sample else "Total Area (mÂ²)"
 
-    h = st.columns([1.1, 1.6, 2.2, 0.9, 1.1, 1.1])
+    h = st.columns([1.0, 1.4, 2.0, 0.9, 1.0, 1.1, 1.4, 1.0])
     h[0].markdown("**Work Item Code**")
     h[1].markdown("**Material:Name**")
     h[2].markdown("**Material:Description**")
     h[3].markdown("**Wastage (%)**")
-    h[4].markdown("**Total Volume (m³)**")
-    h[5].markdown("**Total Area (m²)**")
+    h[4].markdown("**Base Volume (m³)**")
+    h[5].markdown("**Wastage Volume (m³)**")
+    h[6].markdown("**Total Volume (m³)**")
+    h[7].markdown("**Total Area (m²)**")
     st.divider()
 
-    updated = []
-    for idx, row in enumerate(rows):
-        c = st.columns([1.1, 1.6, 2.2, 0.9, 1.1, 1.1])
+    for row in rows:
+        c = st.columns([1.0, 1.4, 2.0, 0.9, 1.0, 1.1, 1.4, 1.0])
         c[0].write(row.get("Work Item Code", ""))
         c[1].write(row.get("Material:Name", ""))
         c[2].write(row.get("Material:Description", ""))
-
-        is_total_row = str(row.get("Material:Name", "")).strip().lower().startswith("total for ")
-        if is_total_row:
-            c[3].write("")
-            wastage = ""
-        else:
-            try:
-                default_wastage = float(row.get("Wastage (%)") or 0.0)
-            except Exception:
-                default_wastage = 0.0
-            wastage = c[3].number_input(
-                "Wastage (%)",
-                min_value=0.0,
-                step=0.01,
-                format="%.2f",
-                value=default_wastage,
-                key=f"{key_prefix}_wastage_{idx}",
-                label_visibility="collapsed",
-            )
-
-        c[4].write(row.get(vol_key, ""))
-        c[5].write(row.get(area_key, ""))
+        c[3].write(row.get("Wastage (%)", ""))
+        c[4].write(row.get(base_vol_key, ""))
+        c[5].write(row.get("Wastage Volume (m³)", row.get("Wastage Qty (m³)", "")))
+        c[6].write(row.get("Total Volume (m³)", row.get("Total Volume + Wastage (m³)", "")))
+        c[7].write(row.get(area_key, ""))
         st.divider()
+    return rows
 
-        new_row = dict(row)
-        new_row["Wastage (%)"] = "" if wastage == "" else f"{float(wastage):.2f}"
-        updated.append(new_row)
 
-    return updated
+def build_qto_merged_rows(rows, wastage_map=None):
+    wastage_map = wastage_map or {}
+    grouped = {}
+
+    def _to_float(v):
+        try:
+            return float(str(v).replace(",", "").strip())
+        except Exception:
+            return 0.0
+
+    normalized = []
+    for r in rows or []:
+        code = str(r.get("Work Item Code", "")).strip()
+        family = str(r.get("Family", "")).strip()
+        type_name = str(r.get("Type", "")).strip()
+        material_name = str(r.get("Material:Name", "")).strip()
+        material_desc = str(r.get("Material:Description", "")).strip()
+        base_vol = _to_float(r.get("Total Volume (m³)", r.get("Total Volume (mÂ³)", 0)))
+        area = _to_float(r.get("Total Area (m²)", r.get("Total Area (mÂ²)", 0)))
+        wastage_pct = _get_wastage_pct(wastage_map, code, default_pct=0.0)
+        wastage_vol = base_vol * (wastage_pct / 100.0)
+        total_vol = base_vol + wastage_vol
+        normalized.append(
+            {
+                "Work Item Code": code,
+                "Family": family,
+                "Type": type_name,
+                "Material:Name": material_name,
+                "Material:Description": material_desc,
+                "Wastage (%)": _format_indian_number(wastage_pct, 2),
+                "Base Volume (m³)": _format_indian_number(base_vol, 3),
+                "Wastage Volume (m³)": _format_indian_number(wastage_vol, 3),
+                "Total Volume (m³)": _format_indian_number(total_vol, 3),
+                "Total Area (m²)": _format_indian_number(area, 3),
+                "_base_vol": base_vol,
+                "_wastage_vol": wastage_vol,
+                "_total_vol": total_vol,
+                "_area": area,
+            }
+        )
+
+    normalized.sort(
+        key=lambda x: (
+            x["Work Item Code"],
+            x["Family"],
+            x["Type"],
+            x["Material:Name"],
+            x["Material:Description"],
+        )
+    )
+
+    merged = []
+    for row in normalized:
+        code = row["Work Item Code"]
+        if code not in grouped:
+            grouped[code] = {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0}
+        grouped[code]["base"] += row["_base_vol"]
+        grouped[code]["wastage"] += row["_wastage_vol"]
+        grouped[code]["total"] += row["_total_vol"]
+        grouped[code]["area"] += row["_area"]
+        merged.append({k: v for k, v in row.items() if not k.startswith("_")})
+
+    final_rows = []
+    current_code = None
+    for row in merged:
+        code = row["Work Item Code"]
+        if current_code is None:
+            current_code = code
+        elif code != current_code:
+            sums = grouped.get(current_code, {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0})
+            final_rows.append(
+                {
+                    "Work Item Code": current_code,
+                    "Family": "",
+                    "Type": "",
+                    "Material:Name": f"Total for {current_code}",
+                    "Material:Description": "",
+                    "Wastage (%)": "",
+                    "Base Volume (m³)": _format_indian_number(sums["base"], 3),
+                    "Wastage Volume (m³)": _format_indian_number(sums["wastage"], 3),
+                    "Total Volume (m³)": _format_indian_number(sums["total"], 3),
+                    "Total Area (m²)": _format_indian_number(sums["area"], 3),
+                }
+            )
+            current_code = code
+        final_rows.append(row)
+
+    if current_code is not None:
+        sums = grouped.get(current_code, {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0})
+        final_rows.append(
+            {
+                "Work Item Code": current_code,
+                "Family": "",
+                "Type": "",
+                "Material:Name": f"Total for {current_code}",
+                "Material:Description": "",
+                "Wastage (%)": "",
+                "Base Volume (m³)": _format_indian_number(sums["base"], 3),
+                "Wastage Volume (m³)": _format_indian_number(sums["wastage"], 3),
+                "Total Volume (m³)": _format_indian_number(sums["total"], 3),
+                "Total Area (m²)": _format_indian_number(sums["area"], 3),
+            }
+        )
+
+    return final_rows
+
+
+def render_qto_merged_table(rows, key_prefix):
+    if not rows:
+        return []
+    headers = [
+        "Work Item Code",
+        "Family",
+        "Type",
+        "Material:Name",
+        "Material:Description",
+        "Wastage (%)",
+        "Base Volume (m³)",
+        "Wastage Volume (m³)",
+        "Total Volume (m³)",
+        "Total Area (m²)",
+    ]
+
+    head_html = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+    body_parts = []
+    for row in rows:
+        is_total = str(row.get("Material:Name", "")).strip().lower().startswith("total for ")
+        cls = "qto-total-row" if is_total else ""
+        tds = "".join(
+            f"<td>{html.escape('' if row.get(h) is None else str(row.get(h)))}</td>"
+            for h in headers
+        )
+        body_parts.append(f"<tr class=\"{cls}\">{tds}</tr>")
+
+    table_html = f"""
+    <style>
+      .qto-merged-wrap {{
+        overflow-x: auto;
+        margin-bottom: 0.75rem;
+        border: 1px solid #3b4252;
+        border-radius: 8px;
+      }}
+      .qto-merged-table {{
+        width: 100%;
+        min-width: 1400px;
+        border-collapse: collapse;
+        table-layout: auto;
+      }}
+      .qto-merged-table th,
+      .qto-merged-table td {{
+        border: 1px solid #3b4252;
+        padding: 8px 10px;
+        vertical-align: top;
+      }}
+      .qto-merged-table th {{
+        font-weight: 700;
+        white-space: nowrap;
+      }}
+      .qto-total-row td {{
+        font-weight: 700;
+      }}
+    </style>
+    <div class="qto-merged-wrap">
+      <table class="qto-merged-table">
+        <thead><tr>{head_html}</tr></thead>
+        <tbody>{''.join(body_parts)}</tbody>
+      </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
+    return rows
+
+
+def render_tender_table_qto_style(rows, key_prefix):
+    if not rows:
+        return []
+    headers = [
+        "Work Item Code",
+        "Item",
+        "Area / Volume",
+        "Unit",
+        "Price (\u20B9)",
+        "Total Amount (\u20B9)",
+    ]
+    numeric_headers = {"Area / Volume", "Price (\u20B9)", "Total Amount (\u20B9)"}
+    head_html = "".join(
+        f"<th class=\"{'num' if h in numeric_headers else ''}\">{html.escape(h)}</th>"
+        for h in headers
+    )
+    body_parts = []
+    for row in rows:
+        tds = "".join(
+            f"<td class=\"{'num' if h in numeric_headers else ''}\">{html.escape('' if row.get(h) is None else str(row.get(h)))}</td>"
+            for h in headers
+        )
+        body_parts.append(f"<tr>{tds}</tr>")
+
+    table_html = f"""
+    <style>
+      .tender-qto-wrap {{
+        overflow-x: auto;
+        margin-bottom: 0.75rem;
+        border: 1px solid #3b4252;
+        border-radius: 8px;
+      }}
+      .tender-qto-table {{
+        width: 100%;
+        min-width: 1050px;
+        border-collapse: collapse;
+      }}
+      .tender-qto-table th,
+      .tender-qto-table td {{
+        border: 1px solid #3b4252;
+        padding: 8px 10px;
+        vertical-align: top;
+      }}
+      .tender-qto-table th {{
+        font-weight: 700;
+        white-space: nowrap;
+      }}
+      .tender-qto-table .num {{
+        text-align: right;
+      }}
+    </style>
+    <div class="tender-qto-wrap">
+      <table class="tender-qto-table">
+        <thead><tr>{head_html}</tr></thead>
+        <tbody>{''.join(body_parts)}</tbody>
+      </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
+    return rows
 
 
 def fetch_table_rows(project_code, ifc_file_name, table_name, columns):
@@ -1349,6 +1799,21 @@ st.markdown(
         margin-top: -0.3rem;
         margin-bottom: 1rem;
     }
+    div[data-testid="stHorizontalBlock"] {
+        gap: 0.4rem;
+    }
+    div[data-baseweb="input"] input,
+    div[data-baseweb="select"] > div {
+        min-height: 2rem !important;
+        font-size: 0.90rem !important;
+    }
+    div[data-baseweb="input"] {
+        margin-bottom: 0.15rem;
+    }
+    hr {
+        margin-top: 0.35rem !important;
+        margin-bottom: 0.35rem !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -1456,7 +1921,9 @@ if st.session_state.step == 1:
             disabled=(len(sor_labels) == 0),
         )
 
-        submitted = st.form_submit_button("Next", type="primary")
+        c_spacer, c_next = st.columns([6.6, 1.4])
+        with c_next:
+            submitted = st.form_submit_button("Next", type="primary", use_container_width=True)
 
     if submitted:
         if not project_name.strip():
@@ -1532,7 +1999,7 @@ elif st.session_state.step == 2:
 
         c_prev, c_spacer, c_next = st.columns([1.4, 5.2, 1.4])
         with c_prev:
-            prev_clicked = st.form_submit_button("Previous")
+            prev_clicked = st.form_submit_button("Previous", use_container_width=True)
         with c_next:
             next_clicked = st.form_submit_button("Next", type="primary", use_container_width=True)
 
@@ -1566,6 +2033,77 @@ elif st.session_state.step == 2:
             st.error(f"Failed to process and save project/QTO data: {e}")
 
 elif st.session_state.step == 3:
+    st.markdown('<div class="section-title">Work Item Wastage</div>', unsafe_allow_html=True)
+    project_code = st.session_state.result_project_code
+    ifc_file_name = st.session_state.result_ifc_file_name
+    if not project_code or not ifc_file_name:
+        st.warning("No processed project result found. Please complete previous steps.")
+        if st.button("Back to Step 1"):
+            st.session_state.step = 1
+            st.rerun()
+        st.stop()
+
+    st.caption("Set wastage % for each Work Item Code (defaults are loaded from database).")
+
+    try:
+        masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
+    except Exception as e:
+        st.error(f"Failed to load Work Item Codes: {e}")
+        st.stop()
+
+    work_item_codes = extract_unique_work_item_codes(masonry_rows, plastering_rows, rcc_rows)
+    if not work_item_codes:
+        st.warning("No Work Item Codes found in generated QTO data.")
+        st.stop()
+
+    sor_code = get_project_sor_code(project_code, ifc_file_name)
+    if not sor_code:
+        st.error("Could not resolve SOR code for this project.")
+        st.stop()
+
+    try:
+        db_default_map = get_or_init_wastage_defaults(sor_code, work_item_codes)
+    except Exception as e:
+        st.error(f"Failed to load default wastage values: {e}")
+        st.stop()
+
+    current_map = st.session_state.get("qto_wastage_map", {})
+    initial_map = dict(db_default_map)
+    initial_map.update(current_map)
+    with st.form("work_item_wastage_form", clear_on_submit=False):
+        updated_map = {}
+        for code in work_item_codes:
+            default_pct = _get_wastage_pct(initial_map, code, default_pct=float(db_default_map.get(code, 0.0)))
+            pct = st.number_input(
+                f"{code} - Wastage (%)",
+                min_value=0.0,
+                step=0.01,
+                format="%.2f",
+                value=float(default_pct),
+                key=f"wastage_code_{code}",
+            )
+            updated_map[code] = float(pct)
+
+        c_prev, c_spacer, c_next = st.columns([1.4, 5.2, 1.4])
+        with c_prev:
+            prev_clicked = st.form_submit_button("Previous", use_container_width=True)
+        with c_next:
+            next_clicked = st.form_submit_button("Next", type="primary", use_container_width=True)
+
+    if prev_clicked:
+        st.session_state.step = 2
+        st.rerun()
+    if next_clicked:
+        try:
+            save_wastage_defaults(sor_code, updated_map)
+        except Exception as e:
+            st.error(f"Failed to save wastage values: {e}")
+            st.stop()
+        st.session_state.qto_wastage_map = updated_map
+        st.session_state.step = 4
+        st.rerun()
+
+elif st.session_state.step == 4:
     st.markdown('<div class="section-title">QTO Report</div>', unsafe_allow_html=True)
     project_code = st.session_state.result_project_code
     ifc_file_name = st.session_state.result_ifc_file_name
@@ -1585,76 +2123,54 @@ elif st.session_state.step == 3:
         st.stop()
 
     wastage_map = st.session_state.get("qto_wastage_map", {})
-    masonry_t2 = []
-    plaster_t2 = []
-    rcc_t2 = []
 
     st.subheader("D - Masonry Work")
     if masonry_rows:
-        masonry_t1, masonry_t2 = split_qto_tables(masonry_rows, wastage_map=wastage_map)
-        st.markdown("##### Family Type Table")
-        render_qto_table1_inputs(masonry_t1, "qto_masonry_table1")
-        st.markdown("##### Work Item Table")
-        masonry_t2 = render_qto_table2_inputs(masonry_t2, "qto_masonry_table2")
+        masonry_merged = build_qto_merged_rows(masonry_rows, wastage_map=wastage_map)
+        render_qto_merged_table(masonry_merged, "qto_masonry_merged")
     else:
         st.info("No masonry records found for this project.")
 
     st.subheader("F - Plastering Work")
     if plastering_rows:
-        plaster_t1, plaster_t2 = split_qto_tables(plastering_rows, wastage_map=wastage_map)
-        st.markdown("##### Family Type Table")
-        render_qto_table1_inputs(plaster_t1, "qto_plaster_table1")
-        st.markdown("##### Work Item Table")
-        plaster_t2 = render_qto_table2_inputs(plaster_t2, "qto_plaster_table2")
+        plaster_merged = build_qto_merged_rows(plastering_rows, wastage_map=wastage_map)
+        render_qto_merged_table(plaster_merged, "qto_plaster_merged")
     else:
         st.info("No plastering records found for this project.")
 
     st.subheader("C - RCC Work")
     if rcc_rows:
-        rcc_t1, rcc_t2 = split_qto_tables(rcc_rows, wastage_map=wastage_map)
-        st.markdown("##### Family Type Table")
-        render_qto_table1_inputs(rcc_t1, "qto_rcc_table1")
-        st.markdown("##### Work Item Table")
-        rcc_t2 = render_qto_table2_inputs(rcc_t2, "qto_rcc_table2")
+        rcc_merged = build_qto_merged_rows(rcc_rows, wastage_map=wastage_map)
+        render_qto_merged_table(rcc_merged, "qto_rcc_merged")
     else:
         st.info("No RCC records found for this project.")
-
-    updated_wastage_map = {}
-    for row in masonry_t2 + plaster_t2 + rcc_t2:
-        material_name = str(row.get("Material:Name", "")).strip()
-        if material_name.lower().startswith("total for "):
-            continue
-        try:
-            pct = float(row.get("Wastage (%)") or 0.0)
-        except Exception:
-            pct = 0.0
-        key = _wastage_map_key(row.get("Work Item Code", ""), material_name, row.get("Material:Description", ""))
-        updated_wastage_map[key] = pct
-    st.session_state.qto_wastage_map = updated_wastage_map
 
     st.markdown("---")
     try:
         report_bytes = build_final_report_bytes(project_code, ifc_file_name)
-        st.download_button(
-            "Export Final Report",
-            data=report_bytes,
-            file_name=f"{project_code}_{ifc_file_name}_final_report.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        _exp_spacer, _exp_btn_col = st.columns([6.6, 1.4])
+        with _exp_btn_col:
+            st.download_button(
+                "Export Final Report",
+                data=report_bytes,
+                file_name=f"{project_code}_{ifc_file_name}_final_report.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
     except Exception as e:
         st.error(f"Failed to build export report: {e}")
 
     c_prev, c_spacer, c_next = st.columns([1.4, 5.2, 1.4])
     with c_prev:
-        if st.button("Previous"):
-            st.session_state.step = 2
+        if st.button("Previous", use_container_width=True):
+            st.session_state.step = 3
             st.rerun()
     with c_next:
         if st.button("Next", type="primary", use_container_width=True):
-            st.session_state.step = 4
+            st.session_state.step = 5
             st.rerun()
 
-elif st.session_state.step == 4:
+elif st.session_state.step == 5:
     project_code = st.session_state.result_project_code
     ifc_file_name = st.session_state.result_ifc_file_name
     if not project_code or not ifc_file_name:
@@ -1683,34 +2199,47 @@ elif st.session_state.step == 4:
     with c1:
         st.write(f"**Project Name:** {project.get('project_name','')}")
         st.write(f"**Project Location:** {project.get('project_location','')}")
-        st.write(f"**Site Area:** {project.get('site_area','')}")
-        st.write(f"**Total Built-Up Area:** {project.get('total_builtup_area','')}")
-        st.write(f"**Building Height:** {project.get('building_height','')}")
+        _site_area = project.get("site_area", "")
+        _total_builtup = project.get("total_builtup_area", "")
+        _height = project.get("building_height", "")
+        st.write(f"**Site Area:** {_format_indian_number(_site_area, 3) if _site_area not in ('', None) else ''}")
+        st.write(f"**Total Built-Up Area:** {_format_indian_number(_total_builtup, 3) if _total_builtup not in ('', None) else ''}")
+        st.write(f"**Building Height:** {_format_indian_number(_height, 3) if _height not in ('', None) else ''}")
     with c2:
-        st.write(f"**Estimator By:** {project.get('estimator_name','')}")
-        st.write(f"**Client Name:** {project.get('client_name','')}")
-        st.write(f"**Date of Issue:** {project.get('date_of_issue','')}")
+        est = html.escape(str(project.get("estimator_name", "")))
+        client = html.escape(str(project.get("client_name", "")))
+        doi = html.escape(str(project.get("date_of_issue", "")))
+        st.markdown(f"<div style='text-align:right;'><b>Estimator By:</b> {est}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:right;'><b>Client Name:</b> {client}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:right;'><b>Date of Issue:</b> {doi}</div>", unsafe_allow_html=True)
 
     if estimate_rows:
-        render_simple_table(estimate_rows, wide=True)
-        st.markdown(f"### Grand Total: \u20B9 {grand_total:,.2f}")
-        csv_bytes = build_tender_estimate_csv_bytes(estimate_rows, grand_total)
-        st.download_button(
-            "Export Rate Table (CSV)",
-            data=csv_bytes,
-            file_name=f"{project_code}_{ifc_file_name}_tender_estimate.csv",
-            mime="text/csv",
+        render_tender_table_qto_style(estimate_rows, "tender_table")
+        st.markdown(
+            f"<div style='text-align:right; font-size:1.2rem; font-weight:700;'>Grand Total: {_format_inr(grand_total)}</div>",
+            unsafe_allow_html=True,
         )
+        st.markdown("<div style='height:0.4rem;'></div>", unsafe_allow_html=True)
+        excel_bytes = build_tender_estimate_excel_bytes(estimate_rows, grand_total)
+        _exp_spacer, _exp_btn_col = st.columns([6.6, 1.4])
+        with _exp_btn_col:
+            st.download_button(
+                "Export Rate Table",
+                data=excel_bytes,
+                file_name=f"{project_code}_{ifc_file_name}_tender_estimate.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True,
+            )
     else:
         st.info("No estimate rows could be generated from current summaries.")
 
-    c_prev, c_reset = st.columns(2)
+    c_prev, c_spacer, c_reset = st.columns([1.4, 5.2, 1.4])
     with c_prev:
-        if st.button("Previous"):
-            st.session_state.step = 3
+        if st.button("Previous", use_container_width=True):
+            st.session_state.step = 4
             st.rerun()
     with c_reset:
-        if st.button("Start New Project"):
+        if st.button("Start New Project", use_container_width=True):
             st.session_state.step = 1
             st.session_state.draft_project = None
             st.session_state.draft_charges = None
@@ -1720,6 +2249,3 @@ elif st.session_state.step == 4:
             st.session_state.result_ifc_file_name = None
             st.session_state.qto_wastage_map = {}
             st.rerun()
-
-
-
