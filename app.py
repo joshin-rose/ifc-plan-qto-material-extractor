@@ -13,6 +13,7 @@ import mysql.connector
 import streamlit as st
 import Wall
 import RCC
+import Floor
 import Final_Report
 
 
@@ -246,6 +247,33 @@ def get_subpackage_name_map(sor_code, work_item_codes):
         conn.close()
 
 
+def get_subpackage_description_map(sor_code, work_item_codes):
+    codes = [str(c or "").strip() for c in (work_item_codes or []) if str(c or "").strip()]
+    if not sor_code or not codes:
+        return {}
+
+    conn = get_conn()
+    try:
+        cur = conn.cursor(dictionary=True)
+        placeholders = ", ".join(["%s"] * len(codes))
+        cur.execute(
+            f"""
+            SELECT subpackage_code, description
+            FROM work_item_subpackage
+            WHERE sor_code = %s
+              AND subpackage_code IN ({placeholders})
+            """,
+            (sor_code, *codes),
+        )
+        rows = cur.fetchall()
+        return {
+            str(r.get("subpackage_code") or "").strip(): str(r.get("description") or "").strip()
+            for r in rows
+        }
+    finally:
+        conn.close()
+
+
 def submit_all(project_payload, file_bytes, original_file_name, charges):
     original_name = safe_filename(original_file_name)
     unique_prefix = uuid.uuid4().hex[:8]
@@ -388,6 +416,7 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
         model = ifcopenshell.open(str(file_path))
         wall_rows = Wall.build_rows(model)
         rcc_rows = RCC.build_rows(model)
+        floor_rows = Floor.build_rows(model)
     except Exception:
         try:
             file_path.unlink(missing_ok=True)
@@ -402,21 +431,77 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
     rcc_takeoff_rows = []
 
     for row in wall_rows:
-        pkg = resolve_package_name(row.get("Material:Name", ""), mappings)
+        mat_name = row.get("Material:Name", "")
+        mat_desc = row.get("Material:Description", "")
+        is_rcc_candidate = _is_rcc_candidate(
+            row.get("Family", ""),
+            row.get("Type", ""),
+            mat_name,
+            mat_desc,
+        )
+        if is_rcc_candidate:
+            rcc_takeoff_rows.append(row)
+            continue
+        pkg = resolve_package_name(mat_name, mappings)
+        is_flooring_candidate = bool(_detect_flooring_code_and_name(mat_name, mat_desc)[0])
         if pkg == "Masonry Work":
             masonry_rows.append(row)
-        elif pkg in ("PCC Work", "Plastering Work"):
+        elif pkg in ("PCC Work", "Plastering Work", "Flooring Work") or is_flooring_candidate:
             plaster_rows.append(row)
 
+    # Add explicit flooring extraction rows so all flooring family/type variants
+    # (e.g., Floor, W-Skirting, Monolithic Landing/Run) are persisted for QTO/export.
+    for row in floor_rows:
+        plaster_rows.append(
+            {
+                "ExpressId": row.get("ExpressId", ""),
+                "GlobalId": row.get("GlobalId", ""),
+                "Family": row.get("Family", ""),
+                "Type": row.get("Type", ""),
+                "Base Constraint": row.get("Level", ""),
+                "Length": "",
+                "Width": "",
+                "Material:Name": row.get("Material:Name", ""),
+                "Material:Description": row.get("Material:Description", ""),
+                "Material:Area": row.get("Material:Area", ""),
+                "Material:Volume": row.get("Material:Volume", ""),
+            }
+        )
+
     for row in rcc_rows:
-        pkg = resolve_package_name(row.get("Material:Name", ""), mappings)
-        if pkg == "RCC Work":
+        mat_name = row.get("Material:Name", "")
+        mat_desc = row.get("Material:Description", "")
+        pkg = resolve_package_name(mat_name, mappings)
+        is_flooring_candidate = bool(_detect_flooring_code_and_name(mat_name, mat_desc)[0])
+        is_rcc_candidate = _is_rcc_candidate(
+            row.get("Family", ""),
+            row.get("Type", ""),
+            mat_name,
+            mat_desc,
+        )
+        if pkg == "RCC Work" or is_rcc_candidate or is_flooring_candidate:
             rcc_takeoff_rows.append(row)
 
     conn = get_conn()
     try:
         cur = conn.cursor()
-
+        cur.execute(
+            """
+            SELECT subpackage_code, subpackage_name, package_code, description
+            FROM work_item_subpackage
+            WHERE sor_code = %s
+            """,
+            (sor_code,),
+        )
+        catalog_rows = [
+            {
+                "subpackage_code": r[0],
+                "subpackage_name": r[1],
+                "package_code": r[2],
+                "description": r[3],
+            }
+            for r in (cur.fetchall() or [])
+        ]
         # project + charges
         cur.execute(
             """
@@ -644,7 +729,6 @@ def fetch_qto_report(project_code, ifc_file_name):
                 (sor_code,),
             )
             catalog = cur.fetchall()
-
         def _build_section_rows(rows, include_area):
             normalized = []
             for row in rows:
@@ -659,6 +743,10 @@ def fetch_qto_report(project_code, ifc_file_name):
                 work_item_code = ""
                 if matched:
                     work_item_code = (matched.get("subpackage_code") or "").strip() or (matched.get("package_code") or "").strip()
+                elif _is_rcc_candidate(
+                    family, type_name, material_name, material_description
+                ):
+                    work_item_code = "C3"
 
                 normalized.append(
                     {
@@ -751,6 +839,7 @@ def fetch_qto_report(project_code, ifc_file_name):
             (project_code, ifc_file_name),
         )
         rcc = _build_section_rows(cur.fetchall(), include_area=False)
+        rcc = [row for row in rcc if str(row.get("Work Item Code", "")).strip().upper().startswith("C")]
 
         return masonry, plastering, rcc
     finally:
@@ -924,6 +1013,17 @@ def extract_unique_work_item_codes(*sections):
     return out
 
 
+def _rows_for_work_item_prefix_from_sections(prefix, *sections):
+    out = []
+    p = (prefix or "").strip().upper()
+    for rows in sections:
+        for r in rows or []:
+            code = str(r.get("Work Item Code", "")).strip().upper()
+            if code.startswith(p):
+                out.append(r)
+    return out
+
+
 def _format_indian_number(value, decimals=2):
     try:
         num = float(value)
@@ -955,6 +1055,132 @@ def _format_indian_number(value, decimals=2):
 
 def _format_inr(value):
     return f"\u20B9 {_format_indian_number(value, 2)}"
+
+
+def _work_item_code_sort_key(code):
+    text = str(code or "").strip().upper()
+    if not text:
+        return ("ZZZ", 10**9, "")
+    m = re.match(r"^([A-Z]+)\s*([0-9]+)$", text)
+    if m:
+        return (m.group(1), int(m.group(2)), "")
+    return (text, 10**9, text)
+
+
+def _detect_flooring_code_and_name(*texts):
+    blob = " ".join(str(t or "").strip().lower() for t in texts)
+    if "granite" in blob:
+        return "F1", "Granite"
+    if "marble" in blob:
+        return "F2", "Marble"
+    if any(k in blob for k in ("vitrified", "vitified", "tile", "tiles")):
+        return "F3", "Tile"
+    return "", ""
+
+
+def _is_rcc_candidate(*texts):
+    blob = " ".join(str(t or "").strip().lower() for t in texts)
+    return any(
+        k in blob
+        for k in (
+            "rcc",
+            "reinforced concrete",
+            "reinforced cement concrete",
+            "m30",
+            "m25",
+            "m20",
+        )
+    )
+
+
+def _get_subpackage_catalog_rows(sor_code):
+    if not sor_code:
+        return []
+    conn = get_conn()
+    try:
+        cur = conn.cursor(dictionary=True)
+        cur.execute(
+            """
+            SELECT subpackage_code, subpackage_name, package_code, description
+            FROM work_item_subpackage
+            WHERE sor_code = %s
+            """,
+            (sor_code,),
+        )
+        return cur.fetchall() or []
+    finally:
+        conn.close()
+
+
+def remap_qto_rows_by_name(rows, sor_code):
+    catalog_rows = _get_subpackage_catalog_rows(sor_code)
+    catalog_by_code = {
+        str(r.get("subpackage_code") or "").strip().upper(): r for r in catalog_rows
+    }
+    out = []
+    for r in rows or []:
+        rr = dict(r)
+        mat_name = str(rr.get("Material:Name", "")).strip()
+        mat_desc = str(rr.get("Material:Description", "")).strip()
+        family = str(rr.get("Family", "")).strip()
+        type_name = str(rr.get("Type", "")).strip()
+
+        matched = resolve_subpackage_row(mat_name, mat_desc, catalog_rows) if catalog_rows else None
+        if matched:
+            code = str(matched.get("subpackage_code") or "").strip().upper()
+            if code:
+                rr["Work Item Code"] = code
+            mapped_name = str(matched.get("subpackage_name") or "").strip()
+            if mapped_name:
+                rr["Material:Name"] = mapped_name
+        else:
+            # RCC fallback
+            if _is_rcc_candidate(family, type_name, mat_name, mat_desc):
+                rr["Work Item Code"] = "C3"
+                c3 = catalog_by_code.get("C3")
+                if c3:
+                    rr["Material:Name"] = str(c3.get("subpackage_name") or rr.get("Material:Name", ""))
+            else:
+                # Flooring fallback
+                floor_code, _ = _detect_flooring_code_and_name(family, type_name, mat_name, mat_desc)
+                if floor_code:
+                    rr["Work Item Code"] = floor_code
+                    frow = catalog_by_code.get(floor_code)
+                    if frow:
+                        rr["Material:Name"] = str(frow.get("subpackage_name") or rr.get("Material:Name", ""))
+        out.append(rr)
+    return out
+
+
+def derive_flooring_rows_from_sections(rows, flooring_desc_map=None):
+    flooring_desc_map = flooring_desc_map or {}
+    derived = []
+    def _to_float(v):
+        try:
+            return float(str(v).replace(",", "").strip())
+        except Exception:
+            return 0.0
+    for r in rows or []:
+        family = str(r.get("Family", "")).strip()
+        type_name = str(r.get("Type", "")).strip()
+        mat_name = str(r.get("Material:Name", "")).strip()
+        mat_desc = str(r.get("Material:Description", "")).strip()
+        if _is_rcc_candidate(family, type_name, mat_name, mat_desc):
+            continue
+        code, item_name = _detect_flooring_code_and_name(family, type_name, mat_name, mat_desc)
+        if not code:
+            continue
+        area = _to_float(r.get("Total Area (m²)", r.get("Total Area (mÂ²)", 0)))
+        volume = _to_float(r.get("Total Volume (m³)", r.get("Total Volume (mÂ³)", 0)))
+        if area <= 0 and volume <= 0:
+            continue
+        rr = dict(r)
+        rr["Work Item Code"] = code
+        rr["Material:Name"] = item_name
+        # For flooring, keep description from IFC extraction as source of truth.
+        rr["Material:Description"] = mat_desc or item_name
+        derived.append(rr)
+    return derived
 
 
 def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
@@ -998,6 +1224,27 @@ def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
         )
         summary_rows = cur.fetchall()
 
+        # Painting quantities are area-driven and are derived from plastering takeoff types.
+        cur.execute(
+            """
+            SELECT type_name, SUM(COALESCE(material_area, 0)) AS total_area
+            FROM plastering_material_takeoff
+            WHERE project_code=%s AND ifc_file_name=%s
+            GROUP BY type_name
+            """,
+            (project_code, ifc_file_name),
+        )
+        painting_qty_by_code = {"G1": 0.0, "G2": 0.0}
+        for rr in cur.fetchall() or []:
+            t = str(rr.get("type_name") or "").strip().lower()
+            area = float(rr.get("total_area") or 0.0)
+            if area <= 0:
+                continue
+            if "external wall" in t:
+                painting_qty_by_code["G2"] += area
+            elif "internal wall" in t:
+                painting_qty_by_code["G1"] += area
+
         cur.execute(
             """
             SELECT s.subpackage_code, s.subpackage_name, s.package_code, s.analysis_unit, p.package_name
@@ -1010,6 +1257,9 @@ def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
             (sor_code,),
         )
         catalog = cur.fetchall()
+        catalog_by_code = {
+            str(r.get("subpackage_code") or "").strip(): r for r in (catalog or [])
+        }
 
         cur.execute(
             """
@@ -1055,6 +1305,25 @@ def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
             grouped[key]["total_volume"] += total_volume
             grouped[key]["total_amt"] += total_amt
 
+        # Ensure painting codes are always present in final tender estimate.
+        for forced_code in ("G1", "G2"):
+            info = catalog_by_code.get(forced_code, {})
+            item = (info.get("subpackage_name") or "").strip() or (
+                "Internal Wall Painting" if forced_code == "G1" else "External Wall Painting"
+            )
+            unit = (info.get("analysis_unit") or "").strip()
+            price = float(rate_map.get(forced_code, 0))
+            key = (forced_code, item, unit, price)
+            base_qty = float(painting_qty_by_code.get(forced_code, 0.0))
+            wastage_pct = _get_wastage_pct(wastage_map, forced_code, default_pct=0.0)
+            total_qty = base_qty * (1 + (wastage_pct / 100.0))
+            total_amt = total_qty * price
+            grouped[key] = {
+                "qty": base_qty,
+                "total_volume": total_qty,
+                "total_amt": total_amt,
+            }
+
         rows = []
         grand_total = 0.0
         for (code, item, unit, price), vals in grouped.items():
@@ -1071,6 +1340,13 @@ def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
                     "Total Amount (\u20B9)": _format_indian_number(total_amt, 2),
                 }
             )
+
+        rows.sort(
+            key=lambda r: (
+                _work_item_code_sort_key(r.get("Work Item Code", "")),
+                str(r.get("Item", "")),
+            )
+        )
 
         return project, rows, grand_total
     finally:
@@ -1425,7 +1701,7 @@ def render_qto_table2_inputs(rows, key_prefix):
     return rows
 
 
-def build_qto_merged_rows(rows, wastage_map=None, include_area=True):
+def build_qto_merged_rows(rows, wastage_map=None, include_area=True, area_only=False, flooring_mode=False):
     wastage_map = wastage_map or {}
     grouped = {}
 
@@ -1445,8 +1721,6 @@ def build_qto_merged_rows(rows, wastage_map=None, include_area=True):
         base_vol = _to_float(r.get("Total Volume (m³)", r.get("Total Volume (mÂ³)", 0)))
         area = _to_float(r.get("Total Area (m²)", r.get("Total Area (mÂ²)", 0))) if include_area else 0.0
         wastage_pct = _get_wastage_pct(wastage_map, code, default_pct=0.0)
-        wastage_vol = base_vol * (wastage_pct / 100.0)
-        total_vol = base_vol + wastage_vol
         row_obj = {
             "Work Item Code": code,
             "Family": family,
@@ -1454,16 +1728,35 @@ def build_qto_merged_rows(rows, wastage_map=None, include_area=True):
             "Material:Name": material_name,
             "Material:Description": material_desc,
             "Wastage (%)": _format_indian_number(wastage_pct, 2),
-            "Base Volume (m³)": _format_indian_number(base_vol, 3),
-            "Wastage Volume (m³)": _format_indian_number(wastage_vol, 3),
-            "Total Volume (m³)": _format_indian_number(total_vol, 3),
-            "_base_vol": base_vol,
-            "_wastage_vol": wastage_vol,
-            "_total_vol": total_vol,
             "_area": area,
+            "_total_volume_only": base_vol,
         }
-        if include_area:
-            row_obj["Total Area (m²)"] = _format_indian_number(area, 3)
+        if flooring_mode:
+            wastage_area = area * (wastage_pct / 100.0)
+            total_area = area + wastage_area
+            row_obj["Total Volume (m³)"] = _format_indian_number(base_vol, 3)
+            row_obj["Base Area (m²)"] = _format_indian_number(area, 3)
+            row_obj["Wastage Area (m²)"] = _format_indian_number(wastage_area, 3)
+            row_obj["Total Area (m²)"] = _format_indian_number(total_area, 3)
+            row_obj["_base_vol"] = area
+            row_obj["_wastage_vol"] = wastage_area
+            row_obj["_total_vol"] = total_area
+        else:
+            base_qty = area if area_only else base_vol
+            wastage_qty = base_qty * (wastage_pct / 100.0)
+            total_qty = base_qty + wastage_qty
+            row_obj["Base Volume (m³)"] = _format_indian_number(base_qty, 3)
+            row_obj["Wastage Volume (m³)"] = _format_indian_number(wastage_qty, 3)
+            row_obj["Total Volume (m³)"] = _format_indian_number(total_qty, 3)
+            row_obj["_base_vol"] = base_qty
+            row_obj["_wastage_vol"] = wastage_qty
+            row_obj["_total_vol"] = total_qty
+            if include_area and not area_only:
+                row_obj["Total Area (m²)"] = _format_indian_number(area, 3)
+            if area_only:
+                row_obj["Base Area (m²)"] = _format_indian_number(base_qty, 3)
+                row_obj["Wastage Area (m²)"] = _format_indian_number(wastage_qty, 3)
+                row_obj["Total Area (m²)"] = _format_indian_number(total_qty, 3)
         normalized.append(row_obj)
 
     normalized.sort(
@@ -1480,11 +1773,12 @@ def build_qto_merged_rows(rows, wastage_map=None, include_area=True):
     for row in normalized:
         code = row["Work Item Code"]
         if code not in grouped:
-            grouped[code] = {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0}
+            grouped[code] = {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0, "vol": 0.0}
         grouped[code]["base"] += row["_base_vol"]
         grouped[code]["wastage"] += row["_wastage_vol"]
         grouped[code]["total"] += row["_total_vol"]
         grouped[code]["area"] += row["_area"]
+        grouped[code]["vol"] += row["_total_volume_only"]
         merged.append({k: v for k, v in row.items() if not k.startswith("_")})
 
     final_rows = []
@@ -1494,62 +1788,106 @@ def build_qto_merged_rows(rows, wastage_map=None, include_area=True):
         if current_code is None:
             current_code = code
         elif code != current_code:
-            sums = grouped.get(current_code, {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0})
-            final_rows.append(
-                {
-                    "Work Item Code": current_code,
-                    "Family": "",
-                    "Type": "",
-                    "Material:Name": f"Total for {current_code}",
-                    "Material:Description": "",
-                    "Wastage (%)": "",
-                    "Base Volume (m³)": _format_indian_number(sums["base"], 3),
-                    "Wastage Volume (m³)": _format_indian_number(sums["wastage"], 3),
-                    "Total Volume (m³)": _format_indian_number(sums["total"], 3),
-                }
-            )
-            if include_area:
-                final_rows[-1]["Total Area (m²)"] = _format_indian_number(sums["area"], 3)
-            current_code = code
-        final_rows.append(row)
-
-    if current_code is not None:
-        sums = grouped.get(current_code, {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0})
-        final_rows.append(
-            {
+            sums = grouped.get(current_code, {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0, "vol": 0.0})
+            total_row = {
                 "Work Item Code": current_code,
                 "Family": "",
                 "Type": "",
                 "Material:Name": f"Total for {current_code}",
                 "Material:Description": "",
                 "Wastage (%)": "",
-                "Base Volume (m³)": _format_indian_number(sums["base"], 3),
-                "Wastage Volume (m³)": _format_indian_number(sums["wastage"], 3),
-                "Total Volume (m³)": _format_indian_number(sums["total"], 3),
             }
-        )
-        if include_area:
-            final_rows[-1]["Total Area (m²)"] = _format_indian_number(sums["area"], 3)
+            if flooring_mode:
+                total_row["Total Volume (m³)"] = _format_indian_number(sums["vol"], 3)
+                total_row["Base Area (m²)"] = _format_indian_number(sums["base"], 3)
+                total_row["Wastage Area (m²)"] = _format_indian_number(sums["wastage"], 3)
+                total_row["Total Area (m²)"] = _format_indian_number(sums["total"], 3)
+            else:
+                total_row["Base Volume (m³)"] = _format_indian_number(sums["base"], 3)
+                total_row["Wastage Volume (m³)"] = _format_indian_number(sums["wastage"], 3)
+                total_row["Total Volume (m³)"] = _format_indian_number(sums["total"], 3)
+            if include_area and not area_only and not flooring_mode:
+                total_row["Total Area (m²)"] = _format_indian_number(sums["area"], 3)
+            if area_only:
+                total_row["Base Area (m²)"] = _format_indian_number(sums["base"], 3)
+                total_row["Wastage Area (m²)"] = _format_indian_number(sums["wastage"], 3)
+                total_row["Total Area (m²)"] = _format_indian_number(sums["total"], 3)
+            final_rows.append(total_row)
+            current_code = code
+        final_rows.append(row)
+
+    if current_code is not None:
+        sums = grouped.get(current_code, {"base": 0.0, "wastage": 0.0, "total": 0.0, "area": 0.0, "vol": 0.0})
+        total_row = {
+            "Work Item Code": current_code,
+            "Family": "",
+            "Type": "",
+            "Material:Name": f"Total for {current_code}",
+            "Material:Description": "",
+            "Wastage (%)": "",
+        }
+        if flooring_mode:
+            total_row["Total Volume (m³)"] = _format_indian_number(sums["vol"], 3)
+            total_row["Base Area (m²)"] = _format_indian_number(sums["base"], 3)
+            total_row["Wastage Area (m²)"] = _format_indian_number(sums["wastage"], 3)
+            total_row["Total Area (m²)"] = _format_indian_number(sums["total"], 3)
+        else:
+            total_row["Base Volume (m³)"] = _format_indian_number(sums["base"], 3)
+            total_row["Wastage Volume (m³)"] = _format_indian_number(sums["wastage"], 3)
+            total_row["Total Volume (m³)"] = _format_indian_number(sums["total"], 3)
+        if include_area and not area_only and not flooring_mode:
+            total_row["Total Area (m²)"] = _format_indian_number(sums["area"], 3)
+        if area_only:
+            total_row["Base Area (m²)"] = _format_indian_number(sums["base"], 3)
+            total_row["Wastage Area (m²)"] = _format_indian_number(sums["wastage"], 3)
+            total_row["Total Area (m²)"] = _format_indian_number(sums["total"], 3)
+        final_rows.append(total_row)
 
     return final_rows
 
 
-def render_qto_merged_table(rows, key_prefix, include_area=True):
+def render_qto_merged_table(rows, key_prefix, include_area=True, area_only=False, flooring_mode=False):
     if not rows:
         return []
-    headers = [
-        "Work Item Code",
-        "Family",
-        "Type",
-        "Material:Name",
-        "Material:Description",
-        "Wastage (%)",
-        "Base Volume (m³)",
-        "Wastage Volume (m³)",
-        "Total Volume (m³)",
-    ]
-    if include_area:
-        headers.append("Total Area (m²)")
+    if flooring_mode:
+        headers = [
+            "Work Item Code",
+            "Family",
+            "Type",
+            "Material:Name",
+            "Material:Description",
+            "Wastage (%)",
+            "Total Volume (m³)",
+            "Base Area (m²)",
+            "Wastage Area (m²)",
+            "Total Area (m²)",
+        ]
+    elif area_only:
+        headers = [
+            "Work Item Code",
+            "Family",
+            "Type",
+            "Material:Name",
+            "Material:Description",
+            "Wastage (%)",
+            "Base Area (m²)",
+            "Wastage Area (m²)",
+            "Total Area (m²)",
+        ]
+    else:
+        headers = [
+            "Work Item Code",
+            "Family",
+            "Type",
+            "Material:Name",
+            "Material:Description",
+            "Wastage (%)",
+            "Base Volume (m³)",
+            "Wastage Volume (m³)",
+            "Total Volume (m³)",
+        ]
+        if include_area:
+            headers.append("Total Area (m²)")
 
     head_html = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
     body_parts = []
@@ -1681,6 +2019,114 @@ def fetch_table_rows(project_code, ifc_file_name, table_name, columns):
         conn.close()
 
 
+def build_flooring_takeoff_rows(project_code, ifc_file_name, flooring_desc_map=None):
+    flooring_desc_map = flooring_desc_map or {}
+    headers = [
+        "express_id",
+        "global_id",
+        "family",
+        "type_name",
+        "base_constraint_or_level",
+        "material_name",
+        "material_description",
+        "material_area",
+        "material_volume",
+    ]
+    out = [headers]
+
+    def _append_from_rows(rows, base_field, area_field, volume_field):
+        if not rows:
+            return
+        idx = {name: i for i, name in enumerate(rows[0])}
+        for r in rows[1:]:
+            family = r[idx["family"]] if "family" in idx else ""
+            type_name = r[idx["type_name"]] if "type_name" in idx else ""
+            mat_name = r[idx["material_name"]] if "material_name" in idx else ""
+            mat_desc = r[idx["material_description"]] if "material_description" in idx else ""
+            if _is_rcc_candidate(family, type_name, mat_name, mat_desc):
+                continue
+            code, item_name = _detect_flooring_code_and_name(family, type_name, mat_name, mat_desc)
+            if not code:
+                continue
+            out.append(
+                [
+                    r[idx["express_id"]] if "express_id" in idx else "",
+                    r[idx["global_id"]] if "global_id" in idx else "",
+                    family,
+                    type_name,
+                    r[idx[base_field]] if base_field in idx else "",
+                    item_name,
+                    mat_desc or item_name,
+                    r[idx[area_field]] if area_field in idx else "",
+                    r[idx[volume_field]] if volume_field in idx else "",
+                ]
+            )
+
+    _append_from_rows(
+        fetch_table_rows(
+            project_code,
+            ifc_file_name,
+            "masonry_material_takeoff",
+            [
+                "express_id",
+                "global_id",
+                "family",
+                "type_name",
+                "base_constraint",
+                "material_name",
+                "material_description",
+                "material_area",
+                "material_volume",
+            ],
+        ),
+        "base_constraint",
+        "material_area",
+        "material_volume",
+    )
+    _append_from_rows(
+        fetch_table_rows(
+            project_code,
+            ifc_file_name,
+            "plastering_material_takeoff",
+            [
+                "express_id",
+                "global_id",
+                "family",
+                "type_name",
+                "base_constraint",
+                "material_name",
+                "material_description",
+                "material_area",
+                "material_volume",
+            ],
+        ),
+        "base_constraint",
+        "material_area",
+        "material_volume",
+    )
+    _append_from_rows(
+        fetch_table_rows(
+            project_code,
+            ifc_file_name,
+            "rcc_material_takeoff",
+            [
+                "express_id",
+                "global_id",
+                "family",
+                "type_name",
+                "level_name",
+                "material_name",
+                "material_description",
+                "material_volume",
+            ],
+        ),
+        "level_name",
+        "__missing__",
+        "material_volume",
+    )
+    return out
+
+
 def _rows_to_sheet_rows(rows, headers):
     out = [headers]
     for r in rows or []:
@@ -1691,9 +2137,69 @@ def _rows_to_sheet_rows(rows, headers):
 def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
     wastage_map = wastage_map or {}
     masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
-    masonry_merged = build_qto_merged_rows(masonry_rows, wastage_map=wastage_map, include_area=True)
-    plaster_merged = build_qto_merged_rows(plastering_rows, wastage_map=wastage_map, include_area=True)
-    rcc_merged = build_qto_merged_rows(rcc_rows, wastage_map=wastage_map, include_area=False)
+    sor_code = get_project_sor_code(project_code, ifc_file_name)
+    painting_desc_map = {}
+    if sor_code:
+        try:
+            painting_desc_map = get_subpackage_description_map(sor_code, ["G1", "G2"])
+        except Exception:
+            painting_desc_map = {}
+    all_rows = remap_qto_rows_by_name(
+        (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        sor_code,
+    )
+    pcc_rows = _rows_for_work_item_prefix_from_sections("B", all_rows)
+    rcc_only_rows = _rows_for_work_item_prefix_from_sections("C", all_rows)
+    masonry_only_rows = _rows_for_work_item_prefix_from_sections("D", all_rows)
+    plaster_only_rows = _rows_for_work_item_prefix_from_sections("E", all_rows)
+    flooring_rows = _rows_for_work_item_prefix_from_sections("F", all_rows)
+
+    masonry_merged = build_qto_merged_rows(masonry_only_rows, wastage_map=wastage_map, include_area=True)
+    plaster_merged = build_qto_merged_rows(plaster_only_rows, wastage_map=wastage_map, include_area=True)
+    rcc_merged = build_qto_merged_rows(rcc_only_rows, wastage_map=wastage_map, include_area=False)
+
+    def _derive_painting_rows_from_plaster(rows):
+        derived = []
+        for r in rows or []:
+            type_text = str(r.get("Type", "")).strip().lower()
+            if not type_text:
+                continue
+
+            painting_code = ""
+            painting_name = ""
+            if "external wall" in type_text:
+                painting_code = "G2"
+                painting_name = "External Wall Painting"
+            elif "internal wall" in type_text:
+                painting_code = "G1"
+                painting_name = "Internal Wall Painting"
+            else:
+                continue
+
+            rr = dict(r)
+            rr["Work Item Code"] = painting_code
+            rr["Material:Name"] = painting_name
+            rr["Material:Description"] = (
+                painting_desc_map.get(painting_code)
+                or rr.get("Material:Description")
+                or painting_name
+            )
+            derived.append(rr)
+        return derived
+
+    painting_rows = _derive_painting_rows_from_plaster(plaster_only_rows)
+    flooring_merged = build_qto_merged_rows(
+        flooring_rows,
+        wastage_map=wastage_map,
+        include_area=True,
+        flooring_mode=True,
+    )
+    painting_merged = build_qto_merged_rows(
+        painting_rows,
+        wastage_map=wastage_map,
+        include_area=True,
+        area_only=True,
+    )
 
     qto_headers_with_area = [
         "Work Item Code",
@@ -1718,6 +2224,109 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         "Wastage Volume (m³)",
         "Total Volume (m³)",
     ]
+    painting_summary_headers = [
+        "Work Item Code",
+        "Family",
+        "Type",
+        "Material:Name",
+        "Material:Description",
+        "Wastage (%)",
+        "Base Area (m²)",
+        "Wastage Area (m²)",
+        "Total Area (m²)",
+    ]
+    flooring_summary_headers = [
+        "Work Item Code",
+        "Family",
+        "Type",
+        "Material:Name",
+        "Material:Description",
+        "Wastage (%)",
+        "Total Volume (m³)",
+        "Base Area (m²)",
+        "Wastage Area (m²)",
+        "Total Area (m²)",
+    ]
+
+    plastering_takeoff_rows_raw = fetch_table_rows(
+        project_code,
+        ifc_file_name,
+        "plastering_material_takeoff",
+        [
+            "express_id",
+            "global_id",
+            "family",
+            "type_name",
+            "base_constraint",
+            "length_val",
+            "width_val",
+            "material_name",
+            "material_description",
+            "material_area",
+            "material_volume",
+        ],
+    )
+    plastering_takeoff_rows = []
+    if plastering_takeoff_rows_raw:
+        plastering_takeoff_rows.append(plastering_takeoff_rows_raw[0])
+        hdr = plastering_takeoff_rows_raw[0]
+        idx = {name: i for i, name in enumerate(hdr)}
+        for r in plastering_takeoff_rows_raw[1:]:
+            family = r[idx["family"]] if "family" in idx else ""
+            type_name = r[idx["type_name"]] if "type_name" in idx else ""
+            mat_name = r[idx["material_name"]] if "material_name" in idx else ""
+            mat_desc = r[idx["material_description"]] if "material_description" in idx else ""
+            if _detect_flooring_code_and_name(family, type_name, mat_name, mat_desc)[0]:
+                continue
+            plastering_takeoff_rows.append(r)
+
+    painting_takeoff_headers = [
+        "express_id",
+        "global_id",
+        "family",
+        "type_name",
+        "base_constraint",
+        "length_val",
+        "width_val",
+        "material_name",
+        "material_description",
+        "material_area",
+    ]
+    painting_takeoff_rows = [painting_takeoff_headers]
+    if plastering_takeoff_rows:
+        hdr = plastering_takeoff_rows[0]
+        idx = {name: i for i, name in enumerate(hdr)}
+        for r in plastering_takeoff_rows[1:]:
+            type_text = str(r[idx["type_name"]]).strip().lower() if "type_name" in idx else ""
+            if "external wall" in type_text:
+                code = "G2"
+                mat_name = "External Wall Painting"
+            elif "internal wall" in type_text:
+                code = "G1"
+                mat_name = "Internal Wall Painting"
+            else:
+                continue
+
+            out_row = [
+                r[idx["express_id"]] if "express_id" in idx else "",
+                r[idx["global_id"]] if "global_id" in idx else "",
+                r[idx["family"]] if "family" in idx else "",
+                r[idx["type_name"]] if "type_name" in idx else "",
+                r[idx["base_constraint"]] if "base_constraint" in idx else "",
+                r[idx["length_val"]] if "length_val" in idx else "",
+                r[idx["width_val"]] if "width_val" in idx else "",
+                mat_name,
+                painting_desc_map.get(code, "")
+                or (r[idx["material_description"]] if "material_description" in idx else "")
+                or mat_name,
+                r[idx["material_area"]] if "material_area" in idx else "",
+            ]
+            painting_takeoff_rows.append(out_row)
+
+    flooring_takeoff_rows = build_flooring_takeoff_rows(
+        project_code,
+        ifc_file_name,
+    )
 
     sheets = [
         (
@@ -1747,28 +2356,27 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         ),
         (
             "Plastering_Takeoff",
-            fetch_table_rows(
-                project_code,
-                ifc_file_name,
-                "plastering_material_takeoff",
-                [
-                    "express_id",
-                    "global_id",
-                    "family",
-                    "type_name",
-                    "base_constraint",
-                    "length_val",
-                    "width_val",
-                    "material_name",
-                    "material_description",
-                    "material_area",
-                    "material_volume",
-                ],
-            ),
+            plastering_takeoff_rows,
         ),
         (
             "Plastering_Summary",
             _rows_to_sheet_rows(plaster_merged, qto_headers_with_area),
+        ),
+        (
+            "Flooring_Takeoff",
+            flooring_takeoff_rows,
+        ),
+        (
+            "Flooring_Summary",
+            _rows_to_sheet_rows(flooring_merged, flooring_summary_headers),
+        ),
+        (
+            "Painting_Takeoff",
+            painting_takeoff_rows,
+        ),
+        (
+            "Painting_Summary",
+            _rows_to_sheet_rows(painting_merged, painting_summary_headers),
         ),
         (
             "RCC_Takeoff",
@@ -2089,12 +2697,18 @@ elif st.session_state.step == 3:
         st.error(f"Failed to load Work Item Codes: {e}")
         st.stop()
 
-    work_item_codes = extract_unique_work_item_codes(masonry_rows, plastering_rows, rcc_rows)
+    sor_code = get_project_sor_code(project_code, ifc_file_name)
+    remapped_for_wastage = remap_qto_rows_by_name(
+        (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        sor_code,
+    )
+    work_item_codes = extract_unique_work_item_codes(remapped_for_wastage)
+    for _fixed_code in ("G1", "G2"):
+        if _fixed_code not in work_item_codes:
+            work_item_codes.append(_fixed_code)
     if not work_item_codes:
         st.warning("No Work Item Codes found in generated QTO data.")
         st.stop()
-
-    sor_code = get_project_sor_code(project_code, ifc_file_name)
     if not sor_code:
         st.error("Could not resolve SOR code for this project.")
         st.stop()
@@ -2168,27 +2782,88 @@ elif st.session_state.step == 4:
         st.stop()
 
     wastage_map = st.session_state.get("qto_wastage_map", {})
+    sor_code = get_project_sor_code(project_code, ifc_file_name)
+    painting_desc_map = {}
+    if sor_code:
+        try:
+            painting_desc_map = get_subpackage_description_map(sor_code, ["G1", "G2"])
+        except Exception:
+            painting_desc_map = {}
+    def _derive_painting_rows_from_plaster(rows):
+        derived = []
+        for r in rows or []:
+            type_text = str(r.get("Type", "")).strip().lower()
+            if not type_text:
+                continue
 
-    st.subheader("D - Masonry Work")
-    if masonry_rows:
-        masonry_merged = build_qto_merged_rows(masonry_rows, wastage_map=wastage_map, include_area=True)
-        render_qto_merged_table(masonry_merged, "qto_masonry_merged", include_area=True)
-    else:
-        st.info("No masonry records found for this project.")
+            painting_code = ""
+            painting_name = ""
+            if "external wall" in type_text:
+                painting_code = "G2"
+                painting_name = "External Wall Painting"
+            elif "internal wall" in type_text:
+                painting_code = "G1"
+                painting_name = "Internal Wall Painting"
+            else:
+                continue
 
-    st.subheader("F - Plastering Work")
-    if plastering_rows:
-        plaster_merged = build_qto_merged_rows(plastering_rows, wastage_map=wastage_map, include_area=True)
-        render_qto_merged_table(plaster_merged, "qto_plaster_merged", include_area=True)
-    else:
-        st.info("No plastering records found for this project.")
+            rr = dict(r)
+            rr["Work Item Code"] = painting_code
+            rr["Material:Name"] = painting_name
+            rr["Material:Description"] = (
+                painting_desc_map.get(painting_code)
+                or rr.get("Material:Description")
+                or painting_name
+            )
+            derived.append(rr)
+        return derived
 
-    st.subheader("C - RCC Work")
-    if rcc_rows:
-        rcc_merged = build_qto_merged_rows(rcc_rows, wastage_map=wastage_map, include_area=False)
-        render_qto_merged_table(rcc_merged, "qto_rcc_merged", include_area=False)
-    else:
-        st.info("No RCC records found for this project.")
+    all_rows = remap_qto_rows_by_name(
+        (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        sor_code,
+    )
+    pcc_rows = _rows_for_work_item_prefix_from_sections("B", all_rows)
+    rcc_only_rows = _rows_for_work_item_prefix_from_sections("C", all_rows)
+    masonry_only_rows = _rows_for_work_item_prefix_from_sections("D", all_rows)
+    plaster_only_rows = _rows_for_work_item_prefix_from_sections("E", all_rows)
+    flooring_rows = _rows_for_work_item_prefix_from_sections("F", all_rows)
+    painting_rows = _derive_painting_rows_from_plaster(plaster_only_rows)
+
+    section_definitions = [
+        ("A - Earth Work", [], True, "qto_earth"),
+        ("B - PCC Work", pcc_rows, True, "qto_pcc"),
+        ("C - RCC Work", rcc_only_rows, False, "qto_rcc"),
+        ("D - Masonry Work", masonry_only_rows, True, "qto_masonry"),
+        ("E - Plastering Work", plaster_only_rows, True, "qto_plaster"),
+        ("F - Flooring Work", flooring_rows, True, "qto_flooring"),
+        ("G - Painting Work", painting_rows, True, "qto_painting"),
+    ]
+
+    rendered_any_section = False
+    for title, rows, include_area, key_prefix in section_definitions:
+        if not rows:
+            continue
+        rendered_any_section = True
+        area_only = key_prefix == "qto_painting"
+        flooring_mode = key_prefix == "qto_flooring"
+        st.subheader(title)
+        merged_rows = build_qto_merged_rows(
+            rows,
+            wastage_map=wastage_map,
+            include_area=include_area,
+            area_only=area_only,
+            flooring_mode=flooring_mode,
+        )
+        render_qto_merged_table(
+            merged_rows,
+            f"{key_prefix}_merged",
+            include_area=include_area,
+            area_only=area_only,
+            flooring_mode=flooring_mode,
+        )
+
+    if not rendered_any_section:
+        st.info("No QTO records found for this project.")
 
     st.markdown("---")
     try:

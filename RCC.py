@@ -73,6 +73,24 @@ def split_family_type(name: str) -> Tuple[str, str]:
 
 
 def get_pset_value(element, property_name: str) -> str:
+    vals = get_pset_values(element, property_name)
+    return vals[0] if vals else ""
+
+
+def get_pset_values(element, property_name: str) -> List[str]:
+    out: List[str] = []
+    seen = set()
+
+    def _push(v) -> None:
+        vv = s(unwrap(v)).strip()
+        if not vv:
+            return
+        key = vv.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(vv)
+
     for rel in getattr(element, "IsDefinedBy", []) or []:
         # Element-level property sets
         if rel.is_a("IfcRelDefinesByProperties"):
@@ -83,7 +101,7 @@ def get_pset_value(element, property_name: str) -> str:
                         prop.is_a("IfcPropertySingleValue")
                         and s(prop.Name).strip().lower() == property_name.strip().lower()
                     ):
-                        return s(unwrap(prop.NominalValue))
+                        _push(prop.NominalValue)
 
         # Type-level property sets (common in Revit exports)
         if rel.is_a("IfcRelDefinesByType"):
@@ -96,8 +114,8 @@ def get_pset_value(element, property_name: str) -> str:
                         prop.is_a("IfcPropertySingleValue")
                         and s(prop.Name).strip().lower() == property_name.strip().lower()
                     ):
-                        return s(unwrap(prop.NominalValue))
-    return ""
+                        _push(prop.NominalValue)
+    return out
 
 
 def get_level(element) -> str:
@@ -109,12 +127,35 @@ def get_level(element) -> str:
 
 
 def get_element_description(element) -> str:
-    # Prefer explicit Description property from element/property set
-    pset_desc = get_pset_value(element, "Description")
-    if pset_desc:
-        return pset_desc
-    # Fallback to element's native Description attribute
-    return s(getattr(element, "Description", ""))
+    candidates: List[str] = []
+    for prop_name in ("Description", "Type Comments", "Assembly Description", "Comments", "Original Type"):
+        candidates.extend(get_pset_values(element, prop_name))
+    native_desc = s(getattr(element, "Description", "")).strip()
+    if native_desc:
+        candidates.append(native_desc)
+
+    if not candidates:
+        return ""
+
+    def _score(text: str) -> Tuple[int, int, int]:
+        t = s(text).strip().lower()
+        has_rcc_sentence = int(
+            any(
+                k in t
+                for k in (
+                    "laying reinforced cement concrete",
+                    "reinforced cement concrete",
+                    "rcc of",
+                    "m30",
+                    "m25",
+                    "m20",
+                )
+            )
+        )
+        is_generic = int(any(k in t for k in ("basic structural asset", "structural asset")))
+        return (has_rcc_sentence, -is_generic, len(t))
+
+    return max(candidates, key=_score)
 
 
 def get_quantities(element) -> Dict[str, str]:
@@ -175,15 +216,49 @@ def get_quantities(element) -> Dict[str, str]:
 
 
 def get_material_description(material) -> str:
-    direct = s(getattr(material, "Description", ""))
+    candidates: List[Tuple[str, str]] = []
+
+    direct = s(getattr(material, "Description", "")).strip()
     if direct:
-        return direct
+        candidates.append(("material.description", direct))
+
     for prop_set in getattr(material, "HasProperties", []) or []:
+        pset_name = s(getattr(prop_set, "Name", "")).strip().lower()
         props = getattr(prop_set, "Properties", None) or getattr(prop_set, "ExtendedProperties", None)
         for prop in props or []:
-            if prop.is_a("IfcPropertySingleValue") and prop.Name == "Description":
-                return s(unwrap(prop.NominalValue))
-    return ""
+            if not prop.is_a("IfcPropertySingleValue"):
+                continue
+            if s(prop.Name).strip().lower() != "description":
+                continue
+            text = s(unwrap(prop.NominalValue)).strip()
+            if not text:
+                continue
+            candidates.append((pset_name, text))
+
+    if not candidates:
+        return ""
+
+    def _score(item: Tuple[str, str]) -> Tuple[int, int, int]:
+        src, text = item
+        t = text.lower()
+        has_rcc_phrase = int(
+            any(
+                k in t
+                for k in (
+                    "laying reinforced cement concrete",
+                    "reinforced cement concrete",
+                    "rcc",
+                    "m30",
+                    "m25",
+                    "m20",
+                )
+            )
+        )
+        src_priority = int("identity" in src)
+        generic_penalty = -int(any(k in t for k in ("basic structural asset", "structural asset")))
+        return (has_rcc_phrase, src_priority, generic_penalty)
+
+    return max(candidates, key=_score)[1]
 
 
 def is_rcc_text(text: str) -> bool:
@@ -288,8 +363,29 @@ def build_rows(model) -> List[Dict[str, str]]:
         for mat in material_rows:
             mat_name = s(mat["Material:Name"])
             mat_desc = s(mat["Material:Description"])
-            # Use element Description (if available) over generic material description.
-            final_desc = element_desc or mat_desc
+            # Prefer richer RCC-oriented text between element and material descriptions.
+            def _desc_score(text: str) -> Tuple[int, int, int]:
+                t = s(text).strip().lower()
+                if not t:
+                    return (0, 0, 0)
+                has_rcc_phrase = int(
+                    any(
+                        k in t
+                        for k in (
+                            "laying reinforced cement concrete",
+                            "reinforced cement concrete",
+                            "rcc of",
+                            "rcc",
+                            "m30",
+                            "m25",
+                            "m20",
+                        )
+                    )
+                )
+                generic_penalty = -int(any(k in t for k in ("basic structural asset", "structural asset")))
+                return (has_rcc_phrase, generic_penalty, len(t))
+
+            final_desc = max([element_desc, mat_desc], key=_desc_score)
 
             if not (
                 is_rcc_text(mat_name)
@@ -360,10 +456,55 @@ def build_summary(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
     return summary
 
 
+def build_family_type_description_catalog(rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    grouped: Dict[Tuple[str, str, str, str], Dict[str, float]] = {}
+    for row in rows:
+        family = s(row.get("Family", "")).strip()
+        type_name = s(row.get("Type", "")).strip()
+        mat_name = s(row.get("Material:Name", "")).strip()
+        mat_desc = s(row.get("Material:Description", "")).strip()
+        key = (family, type_name, mat_name, mat_desc)
+        if key not in grouped:
+            grouped[key] = {"count": 0.0, "volume": 0.0}
+        grouped[key]["count"] += 1.0
+        grouped[key]["volume"] += to_float(s(row.get("Material:Volume", "")))
+
+    out: List[Dict[str, str]] = []
+    for (family, type_name, mat_name, mat_desc), vals in sorted(
+        grouped.items(), key=lambda x: (x[0][0], x[0][1], x[0][2], x[0][3])
+    ):
+        out.append(
+            {
+                "Family": family,
+                "Type": type_name,
+                "Material:Name": mat_name,
+                "Material:Description": mat_desc,
+                "Occurrence Count": str(int(vals["count"])),
+                "Total Material:Volume": s(vals["volume"]),
+            }
+        )
+    return out
+
+
 def write_summary_csv(rows: List[Dict[str, str]], out_path: str) -> None:
     headers = [
         "Material:Name",
         "Material:Description",
+        "Total Material:Volume",
+    ]
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=headers)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def write_family_type_catalog_csv(rows: List[Dict[str, str]], out_path: str) -> None:
+    headers = [
+        "Family",
+        "Type",
+        "Material:Name",
+        "Material:Description",
+        "Occurrence Count",
         "Total Material:Volume",
     ]
     with open(out_path, "w", newline="", encoding="utf-8") as f:
@@ -380,13 +521,17 @@ def main() -> None:
 
     detail_path = os.path.join(get_script_dir(), "RCC_sheet.csv")
     summary_path = os.path.join(get_script_dir(), "RCC_Summary.csv")
+    catalog_path = os.path.join(get_script_dir(), "RCC_Family_Type_Descriptions.csv")
 
     write_csv(detail_rows, detail_path)
     summary_rows = build_summary(detail_rows)
     write_summary_csv(summary_rows, summary_path)
+    catalog_rows = build_family_type_description_catalog(detail_rows)
+    write_family_type_catalog_csv(catalog_rows, catalog_path)
 
     print(f"Created {detail_path} with {len(detail_rows)} rows.")
     print(f"Created {summary_path} with {len(summary_rows)} rows.")
+    print(f"Created {catalog_path} with {len(catalog_rows)} rows.")
 
 
 if __name__ == "__main__":

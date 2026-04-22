@@ -38,16 +38,47 @@ def split_family_type(name: str) -> Tuple[str, str]:
 
 
 def get_pset_value(element, property_name: str) -> str:
+    values = get_pset_values(element, property_name)
+    return values[0] if values else ""
+
+
+def get_pset_values(element, property_name: str) -> List[str]:
+    out: List[str] = []
+    seen = set()
+
+    def _push(v: str) -> None:
+        vv = s(v).strip()
+        if not vv:
+            return
+        key = vv.lower()
+        if key in seen:
+            return
+        seen.add(key)
+        out.append(vv)
+
     for rel in getattr(element, "IsDefinedBy", []) or []:
-        if not rel.is_a("IfcRelDefinesByProperties"):
-            continue
-        pdef = rel.RelatingPropertyDefinition
-        if not pdef or not pdef.is_a("IfcPropertySet"):
-            continue
-        for prop in pdef.HasProperties or []:
-            if prop.is_a("IfcPropertySingleValue") and prop.Name == property_name:
-                return s(unwrap(prop.NominalValue))
-    return ""
+        if rel.is_a("IfcRelDefinesByProperties"):
+            pdef = rel.RelatingPropertyDefinition
+            if pdef and pdef.is_a("IfcPropertySet"):
+                for prop in pdef.HasProperties or []:
+                    if (
+                        prop.is_a("IfcPropertySingleValue")
+                        and s(prop.Name).strip().lower() == property_name.strip().lower()
+                    ):
+                        _push(s(unwrap(prop.NominalValue)))
+
+        if rel.is_a("IfcRelDefinesByType"):
+            rtype = getattr(rel, "RelatingType", None)
+            for pset in getattr(rtype, "HasPropertySets", []) or []:
+                if not pset or not pset.is_a("IfcPropertySet"):
+                    continue
+                for prop in pset.HasProperties or []:
+                    if (
+                        prop.is_a("IfcPropertySingleValue")
+                        and s(prop.Name).strip().lower() == property_name.strip().lower()
+                    ):
+                        _push(s(unwrap(prop.NominalValue)))
+    return out
 
 
 def get_wall_quantities(element) -> Dict[str, str]:
@@ -88,6 +119,45 @@ def get_material_description(material) -> str:
             if prop.is_a("IfcPropertySingleValue") and prop.Name == "Description":
                 return s(unwrap(prop.NominalValue))
     return ""
+
+
+def is_flooring_text(text: str) -> bool:
+    t = s(text).strip().lower()
+    if not t:
+        return False
+    keys = [
+        "floor",
+        "flooring",
+        "tile",
+        "tiles",
+        "vitrified",
+        "vitified",
+        "ceramic",
+        "marble",
+        "granite",
+        "skirting",
+    ]
+    return any(k in t for k in keys)
+
+
+def get_element_description(element) -> str:
+    candidates: List[str] = []
+    for prop_name in ("Description", "Type Comments", "Comments", "Assembly Description", "Original Type"):
+        candidates.extend(get_pset_values(element, prop_name))
+
+    native_desc = s(getattr(element, "Description", "")).strip()
+    if native_desc:
+        candidates.append(native_desc)
+
+    if not candidates:
+        return ""
+
+    def _score(text: str) -> tuple:
+        t = s(text).strip().lower()
+        has_flooring = int(is_flooring_text(t))
+        return (has_flooring, len(t))
+
+    return max(candidates, key=_score)
 
 
 def get_material_rows(wall, wall_area: float, wall_volume: float) -> List[Dict[str, str]]:
@@ -168,6 +238,7 @@ def build_rows(model) -> List[Dict[str, str]]:
         family_val = get_pset_value(wall, "Family") or family
         type_val = get_pset_value(wall, "Type") or type_name_from_name
         base_constraint = get_pset_value(wall, "Base Constraint")
+        element_desc = get_element_description(wall)
 
         qto = get_wall_quantities(wall)
 
@@ -181,6 +252,17 @@ def build_rows(model) -> List[Dict[str, str]]:
         mat_rows = get_material_rows(wall, wall_area, wall_volume)
 
         for mat in mat_rows:
+            mat_name = s(mat["Material:Name"])
+            mat_desc = s(mat["Material:Description"])
+            final_desc = mat_desc
+            # Prefer IFC element/type description for flooring-like rows where richer
+            # specification text usually lives (e.g. "Flooring finished with 12mm ...").
+            if element_desc and (
+                is_flooring_text(" ".join([family_val, type_val, mat_name, mat_desc]))
+                or not mat_desc
+            ):
+                final_desc = element_desc
+
             out_rows.append(
                 {
                     "ExpressId": s(wall.id()),
@@ -190,8 +272,8 @@ def build_rows(model) -> List[Dict[str, str]]:
                     "Base Constraint": base_constraint,
                     "Length": length_val,
                     "Width": width_val,
-                    "Material:Name": mat["Material:Name"],
-                    "Material:Description": mat["Material:Description"],
+                    "Material:Name": mat_name,
+                    "Material:Description": final_desc,
                     "Material:Area": mat["Material:Area"],
                     "Material:Volume": mat["Material:Volume"],
                 }
