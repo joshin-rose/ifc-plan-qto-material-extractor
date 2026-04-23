@@ -1,2 +1,10 @@
-Material:Name,Material:Description,Total Material:Volume
-RCC - M30,Concrete f'c=30 MPa,1838.3264944444431
+Family,Type,Material:Name,Material:Description,Occurrence Count,Total Volume,Total Material:Volume
+Basic Wall,W-Lift Wall (230mm),RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",18,76.48729733332996,76.48729733332996
+Cast-In-Place Stair,M_Monolithic Stair,RCC,,4,0.0,0.0
+Floor,RCC SLAB 200mm,RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",5,1555.5127444444447,1555.5127444444447
+RCC RECTANGULAR BEAM,RCC BEAM (230mm x 600mm),RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",265,418.285754061286,418.285754061286
+RCC RECTANGULAR COLUMN,RCC COLUMN (230mm x 600mm),RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",661,233.73750000000422,233.73750000000422
+RCC RECTANGULAR FOOTING,1800 x 1200 x 600mm,RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",117,151.56862083333323,151.56862083333323
+RCC RECTANGULAR FOOTING,1800 x 2600 x 600mm,RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",4,11.232000000000003,11.232000000000003
+RCC RECTANGULAR FOOTING,3300 x 1200 x 600mm,RCC - M30,"Laying Reinforced Cement Concrete (RCC) of M30 (1:0.75:1.5) with 20 mm nominal size graded aggregates, including reinforcement steel.",3,7.064620833333343,7.064620833333343
+GRAND TOTAL,,,,1077,2453.888537505731,2453.888537505731

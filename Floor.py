@@ -396,6 +396,9 @@ def build_rows(model) -> List[Dict[str, str]]:
         family_name, type_from_name = split_family_type(name)
         family = get_pset_value(e, "Family") or family_name
         type_name = get_pset_value(e, "Type") or type_from_name
+        skip_signal = " ".join([name, family, type_name]).lower()
+        if ("monolithic landing" in skip_signal) or ("monolithic run" in skip_signal):
+            continue
         level = get_level(e)
         element_desc = get_element_description(e)
         qto = get_quantities(e)

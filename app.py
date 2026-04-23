@@ -432,25 +432,14 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
 
     for row in wall_rows:
         mat_name = row.get("Material:Name", "")
-        mat_desc = row.get("Material:Description", "")
-        is_rcc_candidate = _is_rcc_candidate(
-            row.get("Family", ""),
-            row.get("Type", ""),
-            mat_name,
-            mat_desc,
-        )
-        if is_rcc_candidate:
-            rcc_takeoff_rows.append(row)
-            continue
         pkg = resolve_package_name(mat_name, mappings)
-        is_flooring_candidate = bool(_detect_flooring_code_and_name(mat_name, mat_desc)[0])
         if pkg == "Masonry Work":
             masonry_rows.append(row)
-        elif pkg in ("PCC Work", "Plastering Work", "Flooring Work") or is_flooring_candidate:
+        elif pkg in ("PCC Work", "Plastering Work"):
             plaster_rows.append(row)
 
-    # Add explicit flooring extraction rows so all flooring family/type variants
-    # (e.g., Floor, W-Skirting, Monolithic Landing/Run) are persisted for QTO/export.
+    # Add explicit flooring extraction rows so flooring family/type variants
+    # extracted by Floor.py are persisted for QTO/export.
     for row in floor_rows:
         plaster_rows.append(
             {
@@ -468,19 +457,11 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
             }
         )
 
+    # RCC source of truth must come from RCC.py extraction strategy.
+    # Do not mix wall-derived RCC rows, otherwise lift-wall volume/description
+    # can be overwritten during de-duplication.
     for row in rcc_rows:
-        mat_name = row.get("Material:Name", "")
-        mat_desc = row.get("Material:Description", "")
-        pkg = resolve_package_name(mat_name, mappings)
-        is_flooring_candidate = bool(_detect_flooring_code_and_name(mat_name, mat_desc)[0])
-        is_rcc_candidate = _is_rcc_candidate(
-            row.get("Family", ""),
-            row.get("Type", ""),
-            mat_name,
-            mat_desc,
-        )
-        if pkg == "RCC Work" or is_rcc_candidate or is_flooring_candidate:
-            rcc_takeoff_rows.append(row)
+        rcc_takeoff_rows.append(row)
 
     conn = get_conn()
     try:
@@ -592,6 +573,21 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
             )
 
         if plaster_rows:
+            # Guard against duplicate key collisions on
+            # (project_code, ifc_file_name, express_id, material_name)
+            # caused by the same element being collected from multiple paths.
+            deduped_plaster_rows = []
+            seen_plaster_keys = set()
+            for row in plaster_rows:
+                key = (
+                    int(float(row.get("ExpressId") or 0)),
+                    str(row.get("Material:Name") or "").strip(),
+                )
+                if key in seen_plaster_keys:
+                    continue
+                seen_plaster_keys.add(key)
+                deduped_plaster_rows.append(row)
+
             cur.executemany(
                 """
                 INSERT INTO plastering_material_takeoff
@@ -615,11 +611,26 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
                         float(row.get("Material:Area") or 0) if row.get("Material:Area") not in ("", None) else None,
                         float(row.get("Material:Volume") or 0) if row.get("Material:Volume") not in ("", None) else None,
                     )
-                    for row in plaster_rows
+                    for row in deduped_plaster_rows
                 ],
             )
 
         if rcc_takeoff_rows:
+            # Guard against duplicate key collisions on
+            # (project_code, ifc_file_name, express_id, material_name)
+            # when the same RCC element is collected from more than one source.
+            deduped_rcc_rows = []
+            seen_rcc_keys = set()
+            for row in rcc_takeoff_rows:
+                key = (
+                    int(float(row.get("ExpressId") or 0)),
+                    str(row.get("Material:Name") or "").strip(),
+                )
+                if key in seen_rcc_keys:
+                    continue
+                seen_rcc_keys.add(key)
+                deduped_rcc_rows.append(row)
+
             cur.executemany(
                 """
                 INSERT INTO rcc_material_takeoff
@@ -640,7 +651,7 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
                         row.get("Material:Description") or None,
                         float(row.get("Material:Volume") or 0) if row.get("Material:Volume") not in ("", None) else None,
                     )
-                    for row in rcc_takeoff_rows
+                    for row in deduped_rcc_rows
                 ],
             )
 
@@ -2200,6 +2211,7 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         include_area=True,
         area_only=True,
     )
+    pcc_merged = build_qto_merged_rows(pcc_rows, wastage_map=wastage_map, include_area=True)
 
     qto_headers_with_area = [
         "Work Item Code",
@@ -2328,79 +2340,74 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         ifc_file_name,
     )
 
-    sheets = [
-        (
-            "Masonry_Takeoff",
-            fetch_table_rows(
-                project_code,
-                ifc_file_name,
-                "masonry_material_takeoff",
-                [
-                    "express_id",
-                    "global_id",
-                    "family",
-                    "type_name",
-                    "base_constraint",
-                    "length_val",
-                    "width_val",
-                    "material_name",
-                    "material_description",
-                    "material_area",
-                    "material_volume",
-                ],
-            ),
-        ),
-        (
-            "Masonry_Summary",
-            _rows_to_sheet_rows(masonry_merged, qto_headers_with_area),
-        ),
-        (
-            "Plastering_Takeoff",
-            plastering_takeoff_rows,
-        ),
-        (
-            "Plastering_Summary",
-            _rows_to_sheet_rows(plaster_merged, qto_headers_with_area),
-        ),
-        (
-            "Flooring_Takeoff",
-            flooring_takeoff_rows,
-        ),
-        (
-            "Flooring_Summary",
-            _rows_to_sheet_rows(flooring_merged, flooring_summary_headers),
-        ),
-        (
-            "Painting_Takeoff",
-            painting_takeoff_rows,
-        ),
-        (
-            "Painting_Summary",
-            _rows_to_sheet_rows(painting_merged, painting_summary_headers),
-        ),
-        (
-            "RCC_Takeoff",
-            fetch_table_rows(
-                project_code,
-                ifc_file_name,
-                "rcc_material_takeoff",
-                [
-                    "express_id",
-                    "global_id",
-                    "family",
-                    "type_name",
-                    "level_name",
-                    "material_name",
-                    "material_description",
-                    "material_volume",
-                ],
-            ),
-        ),
-        (
-            "RCC_Summary",
-            _rows_to_sheet_rows(rcc_merged, qto_headers_no_area),
-        ),
-    ]
+    masonry_takeoff_rows = fetch_table_rows(
+        project_code,
+        ifc_file_name,
+        "masonry_material_takeoff",
+        [
+            "express_id",
+            "global_id",
+            "family",
+            "type_name",
+            "base_constraint",
+            "length_val",
+            "width_val",
+            "material_name",
+            "material_description",
+            "material_area",
+            "material_volume",
+        ],
+    )
+    rcc_takeoff_rows = fetch_table_rows(
+        project_code,
+        ifc_file_name,
+        "rcc_material_takeoff",
+        [
+            "express_id",
+            "global_id",
+            "family",
+            "type_name",
+            "level_name",
+            "material_name",
+            "material_description",
+            "material_volume",
+        ],
+    )
+
+    def _has_takeoff_data(sheet_rows):
+        return bool(sheet_rows and len(sheet_rows) > 1)
+
+    sheets = []
+
+    # Defined order: A, B, C, D, E, F, G (include only if data exists).
+    # A (Earth Work) currently has no dedicated extraction table in this export flow.
+    if pcc_merged:
+        sheets.append(("PCC_Summary", _rows_to_sheet_rows(pcc_merged, qto_headers_with_area)))
+
+    if _has_takeoff_data(rcc_takeoff_rows):
+        sheets.append(("RCC_Takeoff", rcc_takeoff_rows))
+    if rcc_merged:
+        sheets.append(("RCC_Summary", _rows_to_sheet_rows(rcc_merged, qto_headers_no_area)))
+
+    if _has_takeoff_data(masonry_takeoff_rows):
+        sheets.append(("Masonry_Takeoff", masonry_takeoff_rows))
+    if masonry_merged:
+        sheets.append(("Masonry_Summary", _rows_to_sheet_rows(masonry_merged, qto_headers_with_area)))
+
+    if _has_takeoff_data(plastering_takeoff_rows):
+        sheets.append(("Plastering_Takeoff", plastering_takeoff_rows))
+    if plaster_merged:
+        sheets.append(("Plastering_Summary", _rows_to_sheet_rows(plaster_merged, qto_headers_with_area)))
+
+    if _has_takeoff_data(flooring_takeoff_rows):
+        sheets.append(("Flooring_Takeoff", flooring_takeoff_rows))
+    if flooring_merged:
+        sheets.append(("Flooring_Summary", _rows_to_sheet_rows(flooring_merged, flooring_summary_headers)))
+
+    if _has_takeoff_data(painting_takeoff_rows):
+        sheets.append(("Painting_Takeoff", painting_takeoff_rows))
+    if painting_merged:
+        sheets.append(("Painting_Summary", _rows_to_sheet_rows(painting_merged, painting_summary_headers)))
 
     with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as tmp:
         tmp_path = tmp.name
