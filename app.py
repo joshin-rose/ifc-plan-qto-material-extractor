@@ -14,7 +14,9 @@ import streamlit as st
 import Wall
 import RCC
 import Floor
+import Earthwork
 import Final_Report
+import shared_extraction
 
 
 # -----------------------------
@@ -414,9 +416,7 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
 
     try:
         model = ifcopenshell.open(str(file_path))
-        wall_rows = Wall.build_rows(model)
-        rcc_rows = RCC.build_rows(model)
-        floor_rows = Floor.build_rows(model)
+        wall_rows, rcc_rows, floor_rows = shared_extraction.build_rows(model)
     except Exception:
         try:
             file_path.unlink(missing_ok=True)
@@ -461,6 +461,13 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
     # Do not mix wall-derived RCC rows, otherwise lift-wall volume/description
     # can be overwritten during de-duplication.
     for row in rcc_rows:
+        if _is_excluded_rcc_row(
+            row.get("Family", ""),
+            row.get("Type", ""),
+            row.get("Material:Name", ""),
+            row.get("Material:Description", ""),
+        ):
+            continue
         rcc_takeoff_rows.append(row)
 
     conn = get_conn()
@@ -710,6 +717,10 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
 
 
 def fetch_qto_report(project_code, ifc_file_name):
+    def _build_earthwork_qto_rows(_ifc_file_name):
+        cached = _get_cached_earthwork_data(_ifc_file_name)
+        return cached.get("qto_rows", []) if cached else []
+
     conn = get_conn()
     try:
         cur = conn.cursor(dictionary=True)
@@ -852,7 +863,9 @@ def fetch_qto_report(project_code, ifc_file_name):
         rcc = _build_section_rows(cur.fetchall(), include_area=False)
         rcc = [row for row in rcc if str(row.get("Work Item Code", "")).strip().upper().startswith("C")]
 
-        return masonry, plastering, rcc
+        earthwork = _build_earthwork_qto_rows(ifc_file_name)
+
+        return earthwork, masonry, plastering, rcc
     finally:
         conn.close()
 
@@ -1104,6 +1117,11 @@ def _is_rcc_candidate(*texts):
     )
 
 
+def _is_excluded_rcc_row(*texts):
+    blob = " ".join(str(t or "").strip().lower() for t in texts)
+    return ("monolithic run" in blob) or ("m_monolithic run" in blob)
+
+
 def _get_subpackage_catalog_rows(sor_code):
     if not sor_code:
         return []
@@ -1234,6 +1252,31 @@ def build_tender_estimate(project_code, ifc_file_name, wastage_map=None):
             (project_code, ifc_file_name, project_code, ifc_file_name, project_code, ifc_file_name),
         )
         summary_rows = cur.fetchall()
+
+        # Earthwork (A1) is IFC-derived and not persisted in *_summary tables.
+        # Include it in tender estimate from Earthwork takeoff.
+        earthwork_takeoff_rows = build_earthwork_takeoff_rows(ifc_file_name)
+        if earthwork_takeoff_rows and len(earthwork_takeoff_rows) > 1:
+            hdr = earthwork_takeoff_rows[0]
+            try:
+                vol_idx = hdr.index("Computed Volume (m³)")
+            except Exception:
+                vol_idx = -1
+            earth_qty = 0.0
+            if vol_idx >= 0:
+                for rr in earthwork_takeoff_rows[1:]:
+                    try:
+                        earth_qty += float(str(rr[vol_idx]).replace(",", "").strip())
+                    except Exception:
+                        continue
+            if earth_qty > 0:
+                summary_rows.append(
+                    {
+                        "material_name": "Earthwork",
+                        "material_description": "",
+                        "qty": earth_qty,
+                    }
+                )
 
         # Painting quantities are area-driven and are derived from plastering takeoff types.
         cur.execute(
@@ -1950,6 +1993,68 @@ def render_qto_merged_table(rows, key_prefix, include_area=True, area_only=False
     return rows
 
 
+def render_earthwork_summary_table(rows, key_prefix):
+    if not rows:
+        return []
+    headers = [
+        "Family",
+        "Type",
+        "Level",
+        "Count",
+        "Material:Name",
+        "Material:Description",
+        "Total Computed Volume (m³)",
+    ]
+    head_html = "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+    body_parts = []
+    for row in rows:
+        is_total = str(row.get("Family", "")).strip().upper() == "GRAND TOTAL"
+        cls = "qto-total-row" if is_total else ""
+        tds = "".join(
+            f"<td>{html.escape('' if row.get(h) is None else str(row.get(h)))}</td>"
+            for h in headers
+        )
+        body_parts.append(f"<tr class=\"{cls}\">{tds}</tr>")
+
+    table_html = f"""
+    <style>
+      .qto-merged-wrap {{
+        overflow-x: auto;
+        margin-bottom: 0.75rem;
+        border: 1px solid #3b4252;
+        border-radius: 8px;
+      }}
+      .qto-merged-table {{
+        width: 100%;
+        min-width: 1200px;
+        border-collapse: collapse;
+        table-layout: auto;
+      }}
+      .qto-merged-table th,
+      .qto-merged-table td {{
+        border: 1px solid #3b4252;
+        padding: 8px 10px;
+        vertical-align: top;
+      }}
+      .qto-merged-table th {{
+        font-weight: 700;
+        white-space: nowrap;
+      }}
+      .qto-total-row td {{
+        font-weight: 700;
+      }}
+    </style>
+    <div class="qto-merged-wrap" id="{html.escape(key_prefix)}">
+      <table class="qto-merged-table">
+        <thead><tr>{head_html}</tr></thead>
+        <tbody>{''.join(body_parts)}</tbody>
+      </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
+    return rows
+
+
 def render_tender_table_qto_style(rows, key_prefix):
     if not rows:
         return []
@@ -2138,6 +2243,133 @@ def build_flooring_takeoff_rows(project_code, ifc_file_name, flooring_desc_map=N
     return out
 
 
+def _earthwork_cache_tag(ifc_file_name):
+    if not ifc_file_name:
+        return None
+    ifc_full_path = UPLOAD_DIR / ifc_file_name
+    if not ifc_full_path.exists():
+        return None
+    try:
+        stt = ifc_full_path.stat()
+        return ifc_file_name, int(stt.st_size), int(stt.st_mtime_ns)
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _build_cached_earthwork_data(ifc_file_name, file_size, file_mtime_ns):
+    _ = (file_size, file_mtime_ns)
+    ifc_full_path = UPLOAD_DIR / ifc_file_name
+    if not ifc_full_path.exists():
+        return {"takeoff_rows": [], "summary_rows": [], "qto_rows": []}
+
+    try:
+        model = ifcopenshell.open(str(ifc_full_path))
+        takeoff_rows = Earthwork.build_takeoff_rows(model) or []
+        summary_rows = Earthwork.build_summary_rows(takeoff_rows) or []
+    except Exception:
+        return {"takeoff_rows": [], "summary_rows": [], "qto_rows": []}
+
+    grouped_qto = {}
+    for r in takeoff_rows:
+        family = str(r.get("Family", "")).strip()
+        typ = str(r.get("Type", "")).strip()
+        key = ("A1", family, typ, "Earthwork", "")
+        vol = r.get("Computed Volume (m³)", r.get("Computed Volume (mÂ³)", "0"))
+        try:
+            vol_f = float(str(vol).replace(",", "").strip())
+        except Exception:
+            vol_f = 0.0
+        grouped_qto[key] = grouped_qto.get(key, 0.0) + vol_f
+
+    qto_rows = []
+    for (code, family, typ, mat_name, mat_desc), vol_f in sorted(
+        grouped_qto.items(),
+        key=lambda x: (x[0][0], x[0][1], x[0][2], x[0][3], x[0][4]),
+    ):
+        qto_rows.append(
+            {
+                "Work Item Code": code,
+                "Family": family,
+                "Type": typ,
+                "Wastage (%)": "0.00",
+                "Material:Name": mat_name,
+                "Material:Description": mat_desc,
+                "Total Volume (m³)": _format_indian_number(vol_f, 3),
+            }
+        )
+
+    return {
+        "takeoff_rows": takeoff_rows,
+        "summary_rows": summary_rows,
+        "qto_rows": qto_rows,
+    }
+
+
+def _get_cached_earthwork_data(ifc_file_name):
+    tag = _earthwork_cache_tag(ifc_file_name)
+    if not tag:
+        return {"takeoff_rows": [], "summary_rows": [], "qto_rows": []}
+    file_name, file_size, file_mtime_ns = tag
+    return _build_cached_earthwork_data(file_name, file_size, file_mtime_ns)
+
+
+def build_earthwork_takeoff_rows(ifc_file_name):
+    headers = [
+        "ExpressId",
+        "GlobalId",
+        "Family",
+        "Type",
+        "Level",
+        "Length (mm)",
+        "Width (mm)",
+        "Depth (mm)",
+        "Elevation (mm)",
+        "Material:Name",
+        "Material:Description",
+        "Computed Volume (m³)",
+    ]
+    out = [headers]
+    rows = _get_cached_earthwork_data(ifc_file_name).get("takeoff_rows", [])
+
+    for r in rows or []:
+        out.append([str(r.get(h, "")) for h in headers])
+    return out
+
+
+def build_earthwork_summary_rows(ifc_file_name):
+    headers = [
+        "Family",
+        "Type",
+        "Level",
+        "Count",
+        "Material:Name",
+        "Material:Description",
+        "Total Computed Volume (m³)",
+    ]
+    out = []
+    rows = _get_cached_earthwork_data(ifc_file_name).get("summary_rows", [])
+
+    for r in rows or []:
+        vol = r.get("Total Computed Volume (m³)", r.get("Total Computed Volume (mÂ³)", "0"))
+        try:
+            vol_f = float(str(vol).replace(",", "").strip())
+        except Exception:
+            vol_f = 0.0
+        out.append(
+            {
+                "Family": str(r.get("Family", "")),
+                "Type": str(r.get("Type", "")),
+                "Level": str(r.get("Level", "")),
+                "Count": str(r.get("Count", "")),
+                "Material:Name": str(r.get("Material:Name", "Earthwork")),
+                "Material:Description": str(r.get("Material:Description", "")),
+                "Total Computed Volume (m³)": _format_indian_number(vol_f, 6),
+            }
+        )
+    return out
+
+
 def _rows_to_sheet_rows(rows, headers):
     out = [headers]
     for r in rows or []:
@@ -2145,9 +2377,18 @@ def _rows_to_sheet_rows(rows, headers):
     return out
 
 
+def _summary_only_rows(rows):
+    out = []
+    for r in rows or []:
+        mat_name = str(r.get("Material:Name", "")).strip().lower()
+        if mat_name.startswith("total for "):
+            out.append(r)
+    return out
+
+
 def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
     wastage_map = wastage_map or {}
-    masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
+    earthwork_rows, masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
     sor_code = get_project_sor_code(project_code, ifc_file_name)
     painting_desc_map = {}
     if sor_code:
@@ -2156,11 +2397,20 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         except Exception:
             painting_desc_map = {}
     all_rows = remap_qto_rows_by_name(
-        (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        (earthwork_rows or []) + (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
         sor_code,
     )
+    earth_rows = _rows_for_work_item_prefix_from_sections("A", all_rows)
     pcc_rows = _rows_for_work_item_prefix_from_sections("B", all_rows)
-    rcc_only_rows = _rows_for_work_item_prefix_from_sections("C", all_rows)
+    rcc_only_rows = [
+        r for r in _rows_for_work_item_prefix_from_sections("C", all_rows)
+        if not _is_excluded_rcc_row(
+            r.get("Family", ""),
+            r.get("Type", ""),
+            r.get("Material:Name", ""),
+            r.get("Material:Description", ""),
+        )
+    ]
     masonry_only_rows = _rows_for_work_item_prefix_from_sections("D", all_rows)
     plaster_only_rows = _rows_for_work_item_prefix_from_sections("E", all_rows)
     flooring_rows = _rows_for_work_item_prefix_from_sections("F", all_rows)
@@ -2211,6 +2461,7 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         include_area=True,
         area_only=True,
     )
+    earthwork_merged = build_qto_merged_rows(earth_rows, wastage_map=wastage_map, include_area=False)
     pcc_merged = build_qto_merged_rows(pcc_rows, wastage_map=wastage_map, include_area=True)
 
     qto_headers_with_area = [
@@ -2339,6 +2590,7 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
         project_code,
         ifc_file_name,
     )
+    earthwork_takeoff_rows = build_earthwork_takeoff_rows(ifc_file_name)
 
     masonry_takeoff_rows = fetch_table_rows(
         project_code,
@@ -2380,7 +2632,11 @@ def build_final_report_bytes(project_code, ifc_file_name, wastage_map=None):
     sheets = []
 
     # Defined order: A, B, C, D, E, F, G (include only if data exists).
-    # A (Earth Work) currently has no dedicated extraction table in this export flow.
+    if _has_takeoff_data(earthwork_takeoff_rows):
+        sheets.append(("Earthwork_Takeoff", earthwork_takeoff_rows))
+    if earthwork_merged:
+        sheets.append(("Earthwork_Summary", _rows_to_sheet_rows(earthwork_merged, qto_headers_no_area)))
+
     if pcc_merged:
         sheets.append(("PCC_Summary", _rows_to_sheet_rows(pcc_merged, qto_headers_with_area)))
 
@@ -2699,18 +2955,18 @@ elif st.session_state.step == 3:
     st.caption("Set wastage % for each Work Item Code (defaults are loaded from database).")
 
     try:
-        masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
+        earthwork_rows, masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
     except Exception as e:
         st.error(f"Failed to load Work Item Codes: {e}")
         st.stop()
 
     sor_code = get_project_sor_code(project_code, ifc_file_name)
     remapped_for_wastage = remap_qto_rows_by_name(
-        (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        (earthwork_rows or []) + (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
         sor_code,
     )
     work_item_codes = extract_unique_work_item_codes(remapped_for_wastage)
-    for _fixed_code in ("G1", "G2"):
+    for _fixed_code in ("A1", "G1", "G2"):
         if _fixed_code not in work_item_codes:
             work_item_codes.append(_fixed_code)
     if not work_item_codes:
@@ -2783,7 +3039,7 @@ elif st.session_state.step == 4:
     st.caption(f"Project: {project_code} | IFC: {ifc_file_name}")
 
     try:
-        masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
+        earthwork_rows, masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
     except Exception as e:
         st.error(f"Failed to load QTO report: {e}")
         st.stop()
@@ -2826,18 +3082,27 @@ elif st.session_state.step == 4:
         return derived
 
     all_rows = remap_qto_rows_by_name(
-        (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        (earthwork_rows or []) + (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
         sor_code,
     )
+    earth_rows = _rows_for_work_item_prefix_from_sections("A", all_rows)
     pcc_rows = _rows_for_work_item_prefix_from_sections("B", all_rows)
-    rcc_only_rows = _rows_for_work_item_prefix_from_sections("C", all_rows)
+    rcc_only_rows = [
+        r for r in _rows_for_work_item_prefix_from_sections("C", all_rows)
+        if not _is_excluded_rcc_row(
+            r.get("Family", ""),
+            r.get("Type", ""),
+            r.get("Material:Name", ""),
+            r.get("Material:Description", ""),
+        )
+    ]
     masonry_only_rows = _rows_for_work_item_prefix_from_sections("D", all_rows)
     plaster_only_rows = _rows_for_work_item_prefix_from_sections("E", all_rows)
     flooring_rows = _rows_for_work_item_prefix_from_sections("F", all_rows)
     painting_rows = _derive_painting_rows_from_plaster(plaster_only_rows)
 
     section_definitions = [
-        ("A - Earth Work", [], True, "qto_earth"),
+        ("A - Earth Work", earth_rows, False, "qto_earth"),
         ("B - PCC Work", pcc_rows, True, "qto_pcc"),
         ("C - RCC Work", rcc_only_rows, False, "qto_rcc"),
         ("D - Masonry Work", masonry_only_rows, True, "qto_masonry"),
@@ -2845,15 +3110,12 @@ elif st.session_state.step == 4:
         ("F - Flooring Work", flooring_rows, True, "qto_flooring"),
         ("G - Painting Work", painting_rows, True, "qto_painting"),
     ]
-
     rendered_any_section = False
     for title, rows, include_area, key_prefix in section_definitions:
         if not rows:
             continue
-        rendered_any_section = True
         area_only = key_prefix == "qto_painting"
         flooring_mode = key_prefix == "qto_flooring"
-        st.subheader(title)
         merged_rows = build_qto_merged_rows(
             rows,
             wastage_map=wastage_map,
@@ -2861,6 +3123,10 @@ elif st.session_state.step == 4:
             area_only=area_only,
             flooring_mode=flooring_mode,
         )
+        if not merged_rows:
+            continue
+        rendered_any_section = True
+        st.subheader(title)
         render_qto_merged_table(
             merged_rows,
             f"{key_prefix}_merged",
