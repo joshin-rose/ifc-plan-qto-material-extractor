@@ -398,7 +398,22 @@ def resolve_package_name(material_name, mappings):
     return None
 
 
-def persist_project_and_qto(project_payload, file_bytes, original_file_name, charges, existing_ifc_file_name=None):
+def persist_project_and_qto(
+    project_payload,
+    file_bytes,
+    original_file_name,
+    charges,
+    existing_ifc_file_name=None,
+    progress_callback=None,
+):
+    def _report(percent, message):
+        if callable(progress_callback):
+            try:
+                progress_callback(percent, message)
+            except Exception:
+                pass
+
+    _report(3, "Preparing IFC file...")
     if existing_ifc_file_name:
         stored_name = existing_ifc_file_name
     else:
@@ -415,7 +430,9 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
     sor_code = payload["sor_database"]
 
     try:
+        _report(12, "Loading IFC model...")
         model = ifcopenshell.open(str(file_path))
+        _report(30, "Extracting wall, RCC, and flooring quantities...")
         wall_rows, rcc_rows, floor_rows = shared_extraction.build_rows(model)
     except Exception:
         try:
@@ -424,6 +441,7 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
             pass
         raise
 
+    _report(45, "Resolving package mappings...")
     mappings = get_material_package_mapping(sor_code)
 
     masonry_rows = []
@@ -470,9 +488,11 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
             continue
         rcc_takeoff_rows.append(row)
 
+    _report(62, "Connecting to database...")
     conn = get_conn()
     try:
         cur = conn.cursor()
+        _report(70, "Updating project and takeoff tables...")
         cur.execute(
             """
             SELECT subpackage_code, subpackage_name, package_code, description
@@ -700,9 +720,11 @@ def persist_project_and_qto(project_payload, file_bytes, original_file_name, cha
             clear_params,
         )
 
+        _report(92, "Recalculating work item rates...")
         recalculate_work_item_rate(cur, sor_code)
 
         conn.commit()
+        _report(92, "Extraction and database update complete.")
     except Exception:
         conn.rollback()
         try:
@@ -1035,6 +1057,48 @@ def extract_unique_work_item_codes(*sections):
                 out.append(code)
     out.sort()
     return out
+
+
+def prepare_wastage_page_context(project_code, ifc_file_name, progress_callback=None):
+    def _report(percent, message):
+        if callable(progress_callback):
+            try:
+                progress_callback(percent, message)
+            except Exception:
+                pass
+
+    _report(94, "Preparing wastage inputs...")
+    earthwork_rows, masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
+
+    _report(96, "Mapping work item codes...")
+    sor_code = get_project_sor_code(project_code, ifc_file_name)
+    remapped_for_wastage = remap_qto_rows_by_name(
+        (earthwork_rows or []) + (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
+        sor_code,
+    )
+    work_item_codes = extract_unique_work_item_codes(remapped_for_wastage)
+    for fixed_code in ("A1", "G1", "G2"):
+        if fixed_code not in work_item_codes:
+            work_item_codes.append(fixed_code)
+
+    if not work_item_codes:
+        raise ValueError("No Work Item Codes found in generated QTO data.")
+    if not sor_code:
+        raise ValueError("Could not resolve SOR code for this project.")
+
+    _report(98, "Loading wastage defaults...")
+    db_default_map = get_or_init_wastage_defaults(sor_code, work_item_codes)
+    subpackage_name_map = get_subpackage_name_map(sor_code, work_item_codes)
+
+    _report(99, "Finalizing wastage page...")
+    return {
+        "project_code": project_code,
+        "ifc_file_name": ifc_file_name,
+        "sor_code": sor_code,
+        "work_item_codes": work_item_codes,
+        "db_default_map": db_default_map,
+        "subpackage_name_map": subpackage_name_map,
+    }
 
 
 def _rows_for_work_item_prefix_from_sections(prefix, *sections):
@@ -2753,6 +2817,8 @@ if "result_ifc_file_name" not in st.session_state:
     st.session_state.result_ifc_file_name = None
 if "qto_wastage_map" not in st.session_state:
     st.session_state.qto_wastage_map = {}
+if "wastage_page_context" not in st.session_state:
+    st.session_state.wastage_page_context = None
 
 # Load SOR codes from sor_data
 try:
@@ -2878,6 +2944,7 @@ if st.session_state.step == 1:
             "estimator_name": estimator_name.strip(),
             "sor_database": sor_map[sor_label],
         }
+        st.session_state.wastage_page_context = None
         st.session_state.step = 2
         st.rerun()
 
@@ -2921,10 +2988,21 @@ elif st.session_state.step == 2:
 
     if prev_clicked:
         st.session_state.draft_charges = updated_rows
+        st.session_state.wastage_page_context = None
         st.session_state.step = 1
         st.rerun()
     if next_clicked:
         st.session_state.draft_charges = updated_rows
+        st.session_state.wastage_page_context = None
+        progress_placeholder = st.empty()
+        status_placeholder = st.empty()
+        progress_bar = progress_placeholder.progress(0)
+
+        def _ui_progress(percent, message):
+            pct = max(0, min(100, int(percent)))
+            progress_bar.progress(pct)
+            status_placeholder.caption(f"{pct}% - {message}")
+
         try:
             existing_ifc_name = None
             if (
@@ -2939,10 +3017,20 @@ elif st.session_state.step == 2:
                 st.session_state.draft_ifc_name,
                 st.session_state.draft_charges,
                 existing_ifc_file_name=existing_ifc_name,
+                progress_callback=_ui_progress,
             )
+
+            wastage_context = prepare_wastage_page_context(
+                project_code,
+                ifc_file_name,
+                progress_callback=_ui_progress,
+            )
+
+            _ui_progress(100, "Completed. Opening wastage page...")
             st.session_state.result_project_code = project_code
             st.session_state.result_ifc_file_name = ifc_file_name
             st.session_state.qto_wastage_map = {}
+            st.session_state.wastage_page_context = wastage_context
             st.session_state.step = 3
             st.rerun()
         except Exception as e:
@@ -2961,38 +3049,23 @@ elif st.session_state.step == 3:
 
     st.caption("Set wastage % for each Work Item Code (defaults are loaded from database).")
 
-    try:
-        earthwork_rows, masonry_rows, plastering_rows, rcc_rows = fetch_qto_report(project_code, ifc_file_name)
-    except Exception as e:
-        st.error(f"Failed to load Work Item Codes: {e}")
-        st.stop()
-
-    sor_code = get_project_sor_code(project_code, ifc_file_name)
-    remapped_for_wastage = remap_qto_rows_by_name(
-        (earthwork_rows or []) + (masonry_rows or []) + (plastering_rows or []) + (rcc_rows or []),
-        sor_code,
+    context = st.session_state.get("wastage_page_context") or {}
+    context_matches = (
+        context.get("project_code") == project_code
+        and context.get("ifc_file_name") == ifc_file_name
     )
-    work_item_codes = extract_unique_work_item_codes(remapped_for_wastage)
-    for _fixed_code in ("A1", "G1", "G2"):
-        if _fixed_code not in work_item_codes:
-            work_item_codes.append(_fixed_code)
-    if not work_item_codes:
-        st.warning("No Work Item Codes found in generated QTO data.")
-        st.stop()
-    if not sor_code:
-        st.error("Could not resolve SOR code for this project.")
-        st.stop()
+    if not context_matches:
+        try:
+            context = prepare_wastage_page_context(project_code, ifc_file_name)
+            st.session_state.wastage_page_context = context
+        except Exception as e:
+            st.error(f"Failed to load Work Item Codes: {e}")
+            st.stop()
 
-    try:
-        db_default_map = get_or_init_wastage_defaults(sor_code, work_item_codes)
-    except Exception as e:
-        st.error(f"Failed to load default wastage values: {e}")
-        st.stop()
-    try:
-        subpackage_name_map = get_subpackage_name_map(sor_code, work_item_codes)
-    except Exception as e:
-        st.error(f"Failed to load subpackage names: {e}")
-        st.stop()
+    sor_code = context.get("sor_code")
+    work_item_codes = context.get("work_item_codes") or []
+    db_default_map = context.get("db_default_map") or {}
+    subpackage_name_map = context.get("subpackage_name_map") or {}
 
     current_map = st.session_state.get("qto_wastage_map", {})
     initial_map = dict(db_default_map)
@@ -3020,6 +3093,7 @@ elif st.session_state.step == 3:
             next_clicked = st.form_submit_button("Next", type="primary", use_container_width=True)
 
     if prev_clicked:
+        st.session_state.wastage_page_context = None
         st.session_state.step = 2
         st.rerun()
     if next_clicked:
@@ -3039,6 +3113,7 @@ elif st.session_state.step == 4:
     if not project_code or not ifc_file_name:
         st.warning("No processed project result found. Please complete previous steps.")
         if st.button("Back to Step 1"):
+            st.session_state.wastage_page_context = None
             st.session_state.step = 1
             st.rerun()
         st.stop()
@@ -3176,6 +3251,7 @@ elif st.session_state.step == 5:
     if not project_code or not ifc_file_name:
         st.warning("No processed project result found.")
         if st.button("Back to Step 1"):
+            st.session_state.wastage_page_context = None
             st.session_state.step = 1
             st.rerun()
         st.stop()
@@ -3248,4 +3324,5 @@ elif st.session_state.step == 5:
             st.session_state.result_project_code = None
             st.session_state.result_ifc_file_name = None
             st.session_state.qto_wastage_map = {}
+            st.session_state.wastage_page_context = None
             st.rerun()
