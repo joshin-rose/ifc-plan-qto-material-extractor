@@ -338,31 +338,19 @@ def infer_rcc_material_name(*texts) -> str:
     return "RCC"
 
 
-def resolve_rcc_grade_name(structural_material: str, *texts) -> str:
-    blob = " ".join([s(structural_material)] + [s(t) for t in texts]).lower()
-    m = re.search(r"\bm\s*([0-9]{2})\b", blob)
-    if m:
-        return f"RCC - M{m.group(1)}"
-    return "RCC"
-
-
-def is_rcc_stair_family(*texts) -> bool:
-    blob = " ".join(s(t).strip().lower() for t in texts)
-    if not blob:
-        return False
-    return (
-        "cast-in-place stair" in blob
-        or "m_monolithic stair" in blob
-        or "m monolithic stair" in blob
-    )
-
-
 def is_excluded_rcc_component(*texts) -> bool:
     blob = " ".join(s(t).strip().lower() for t in texts)
     if not blob:
         return False
-    # Keep this exclusion narrow and explicit based on requested behavior.
-    return ("monolithic landing" in blob) or ("m_monolithic landing" in blob)
+    # Staircase extraction is intentionally disabled for RCC for now.
+    return (
+        ("stair" in blob)
+        or ("staircase" in blob)
+        or ("monolithic run" in blob)
+        or ("m_monolithic run" in blob)
+        or ("monolithic landing" in blob)
+        or ("m_monolithic landing" in blob)
+    )
 
 
 def get_material_rows(element, element_area: float, element_volume: float) -> List[Dict[str, str]]:
@@ -471,7 +459,6 @@ def get_rcc_elements(model) -> List:
         "IfcWall",
         "IfcWallStandardCase",
         "IfcMember",
-        "IfcStair",
         "IfcRamp",
     ]
     out = []
@@ -496,8 +483,6 @@ def build_rows(model) -> List[Dict[str, str]]:
         extra_type_hints.extend(get_pset_values(element, "Family and Type"))
         if is_excluded_rcc_component(name, family, type_name, element_desc, " ".join(extra_type_hints)):
             continue
-        stair_rcc_candidate = is_rcc_stair_family(name, family, type_name, element_desc)
-        stair_rcc_name = resolve_rcc_grade_name(structural_material, name, family, type_name, element_desc)
 
         qto = get_quantities(element)
         element_area, element_area_source = pick_material_area_with_source(qto, s(element.is_a()))
@@ -541,7 +526,6 @@ def build_rows(model) -> List[Dict[str, str]]:
                 or is_rcc_text(type_name)
                 or is_rcc_text(element_desc)
                 or is_rcc_text(structural_material)
-                or stair_rcc_candidate
             ):
                 continue
             inferred_name = structural_material or infer_rcc_material_name(name, family, type_name, element_desc)
@@ -586,18 +570,6 @@ def build_rows(model) -> List[Dict[str, str]]:
             mat_desc = s(mat.get("Material:Description", "")).strip()
             mat_vol = s(mat.get("Material:Volume", "")).strip()
 
-            if stair_rcc_candidate:
-                lower_name = mat_name.lower()
-                # Stair finish materials belong in flooring, not RCC.
-                if any(
-                    k in lower_name
-                    for k in ("tile", "marble", "granite", "ceramic", "vitrified", "vitified", "skirting")
-                ):
-                    continue
-                # Keep stair RCC material grade specific where possible.
-                if (not mat_name) or ("rcc" not in lower_name):
-                    mat_name = stair_rcc_name
-
             if structural_material and (not mat_name or mat_name.lower() in ("<unnamed>", "unnamed", "rcc")):
                 mat_name = structural_material
 
@@ -610,7 +582,6 @@ def build_rows(model) -> List[Dict[str, str]]:
                 or is_rcc_text(family)
                 or is_rcc_text(type_name)
                 or is_rcc_text(name)
-                or stair_rcc_candidate
             ):
                 continue
 
@@ -623,17 +594,7 @@ def build_rows(model) -> List[Dict[str, str]]:
             )
 
         if not candidates:
-            if stair_rcc_candidate:
-                fallback_desc = material_desc_index.get(stair_rcc_name, "") or element_desc
-                candidates = [
-                    {
-                        "Material:Name": stair_rcc_name,
-                        "Material:Description": fallback_desc,
-                        "Material:Volume": s(element_volume) if element_volume else "",
-                    }
-                ]
-            else:
-                continue
+            continue
 
         def _candidate_score(c: Dict[str, str]) -> Tuple[int, int, int, int, int]:
             mat_name = s(c.get("Material:Name", "")).strip()

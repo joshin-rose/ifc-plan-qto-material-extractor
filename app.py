@@ -1119,7 +1119,14 @@ def _is_rcc_candidate(*texts):
 
 def _is_excluded_rcc_row(*texts):
     blob = " ".join(str(t or "").strip().lower() for t in texts)
-    return ("monolithic run" in blob) or ("m_monolithic run" in blob)
+    return (
+        ("stair" in blob)
+        or ("staircase" in blob)
+        or ("monolithic run" in blob)
+        or ("m_monolithic run" in blob)
+        or ("monolithic landing" in blob)
+        or ("m_monolithic landing" in blob)
+    )
 
 
 def _get_subpackage_catalog_rows(sor_code):
